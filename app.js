@@ -143,8 +143,12 @@ function compile(p) {
   });
   const GAP = 0.12, t0 = []; let t = 0;
   durs.forEach(d => { t0.push(t); t += d + GAP; });
+  if (durs.length && lagged(p)) t += DEF_LAG; // 最後に、遅れた守りが追いつくまで見せる
   return { ids, off, S, H, LH, P, durs, t0, total: t, GAP };
 }
+/* 自動の守りは、攻めとボールの動きからワンテンポ（DEF_LAG 秒）遅れて動く。マークとのずれが見えるようにするため */
+const DEF_LAG = 0.5;
+const lagged = p => p.def === 'auto' && p.nd > 0;
 function timeToKU(C, t) {
   const n = C.durs.length; if (!n) return [0, 0];
   t = clamp(t, 0, C.total);
@@ -178,6 +182,12 @@ function stateAt(p, C, k, u) {
     pos[id] = [lerp(ob[0], on[0], wt), lerp(ob[1], on[1], wt)];
   });
   return { pos, ball, holder: h, w, to };
+}
+/* 再生の時刻 t（作戦の始まりからの秒）での全員の位置。自動の守りだけは DEF_LAG 秒前の攻め・ボールに合わせた位置にする */
+function stateAtT(p, C, t) {
+  const n = p.steps.length, [k, u] = timeToKU(C, t), s = stateAt(p, C, n ? k : 0, n ? u : 0);
+  if (n && lagged(p)) { const [k2, u2] = timeToKU(C, Math.max(0, t - DEF_LAG)), b = stateAt(p, C, k2, u2); defIds(p).forEach(id => s.pos[id] = b.pos[id]); }
+  return s;
 }
 /* ステップ k の図（走る線・ドリブル・パス・シュート） */
 function stepShapes(p, C, k) {
@@ -527,7 +537,7 @@ function camOf(v, p, st, dt) {
   if (p.full) fit.push([6.6, 26.8, 4.6], [8.4, 26.8, 4.6]);
   return makeCam([T[0] + D * Math.sin(ob.yaw) * cp, T[1] + D * Math.cos(ob.yaw) * cp, D * Math.sin(ob.pitch)], T, cw, ch, { fit, zoom: ob.zoom, focus: [cur.focus[0], cur.focus[1], 0] });
 }
-function curState() { const p = cur.play, C = compile(p), n = p.steps.length, [k, u] = timeToKU(C, cur.t); return stateAt(p, C, n ? k : 0, n ? u : 0); }
+function curState() { const p = cur.play; return stateAtT(p, compile(p), cur.t); }
 function setView(v, quick) { // 視点を変える。前の視点からカメラをすべらせる
   const old = effView(); cur.view = v; cur.lk = [0, 0]; cur.lkBack = false;
   const now = effView();
@@ -540,8 +550,9 @@ function draw(dt) {
   const C = compile(p), n = p.steps.length;
   if (cur.mode === 'edit') {
     cur.step = clamp(cur.step, 0, n);
-    const k = cur.step - 1, tu = k >= 0 && cur.timing ? clamp(cur.tp / (C.durs[k] || 1), 0, 1) : 0; // タイミングの帯で選んだ時刻
-    const st = stateAt(p, C, Math.max(0, k), tu), o = { paths: [], ghosts: [] };
+    const k = cur.step - 1, tp = k >= 0 && cur.timing ? clamp(cur.tp, 0, C.durs[k] || 0) : 0; // タイミングの帯で選んだ時刻
+    // ふだんは守りを落ち着いた位置で描く。帯で時刻を進めたときだけ、再生と同じく守りを遅らせる
+    const st = tp > 0 ? stateAtT(p, C, C.t0[k] + tp) : stateAt(p, C, Math.max(0, k), 0), o = { paths: [], ghosts: [] };
     if (k >= 0) {
       if (k > 0) o.paths.push({ shapes: stepShapes(p, C, k - 1), alpha: 0.16 });
       o.paths.push({ shapes: stepShapes(p, C, k), alpha: 1 });
@@ -552,7 +563,7 @@ function draw(dt) {
     tfNow = drawTop(ctx, cw, ch, p, st, o);
     return;
   }
-  const [k, u] = timeToKU(C, cur.t), st = stateAt(p, C, n ? k : 0, n ? u : 0), shapes = n ? stepShapes(p, C, k) : [];
+  const [k] = timeToKU(C, cur.t), st = stateAtT(p, C, cur.t), shapes = n ? stepShapes(p, C, k) : [];
   const v = effView(), q = cur.quiz;
   if (cur.trans) drawPersp(ctx, cw, ch, p, st, mixCam(cur.trans.from, camOf(v, p, st, dt), cur.trans.u), { shapes, me: cur.me, fade: true, onlyMine: v === 'me' });
   else if (v === 'top') {
@@ -1020,7 +1031,7 @@ function heroFrame(dt) {
   if (!hero.w) return;
   const p = heroPlay(), v = HERO_VIEWS[hero.n % 3], C = compile(p), x = hero.x, w = hero.w, h = hero.h;
   cw = w; ch = h; cur.me = HERO_ME[Math.floor(hero.n / 3) % SAMPLES.length]; cur.lk = [0, 0];
-  const tt = clamp(hero.t, 0, C.total), [k, u] = timeToKU(C, tt), st = stateAt(p, C, k, u), shapes = stepShapes(p, C, k);
+  const tt = clamp(hero.t, 0, C.total), [k] = timeToKU(C, tt), st = stateAtT(p, C, tt), shapes = stepShapes(p, C, k);
   cur.orbit = { yaw: -0.5 + tt / C.total, pitch: 0.55, zoom: 1 }; // ななめはゆっくり回りこむ
   const cam = camOf(v, p, st, dt);
   if (hero.trans) drawPersp(x, w, h, p, st, mixCam(hero.trans.from, cam, hero.trans.u), { shapes, me: cur.me, fade: true, onlyMine: v === 'me' });
@@ -1060,5 +1071,5 @@ function boot() {
 window.addEventListener('hashchange', () => { if (/[#&]p=/.test(location.hash)) boot(); });
 boot();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-window.HS = { cur, compile, stateAt, draw, resize, pack, unpack, shareUrl, plays: () => plays, tf: () => tfNow }; // 確認用
+window.HS = { cur, compile, stateAt, stateAtT, draw, resize, pack, unpack, shareUrl, plays: () => plays, tf: () => tfNow }; // 確認用
 })();
