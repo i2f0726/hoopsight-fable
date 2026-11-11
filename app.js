@@ -397,10 +397,6 @@ function drawPersp(ctx, w, h, p, st, cam, o) {
       ctx.globalAlpha = 1;
     }
   });
-  if (incoming) { // 画面の上に合図
-    ctx.save(); ctx.font = '800 22px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(10,19,32,.8)'; ctx.fillStyle = C_ME;
-    ctx.strokeText('パスが来る！', w / 2, 14); ctx.fillText('パスが来る！', w / 2, 14); ctx.restore();
-  }
 }
 
 /* ───────── 保存 ───────── */
