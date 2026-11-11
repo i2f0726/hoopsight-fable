@@ -1,14 +1,6 @@
 @echo off
-rem ============================================================
-rem  HOOP SIGHT（Fable版） ― GitHub に公開（ダブルクリックで実行）
-rem   1. 変更があれば記録（コミット）
-rem   2. はじめての時だけ GitHub にリポジトリを作り、公開ページ（GitHub Pages）を有効にする
-rem   3. GitHub へアップロード（push）
-rem   4. 公開ページを開く
-rem  上がるのは .gitignore に書いたファイルだけ（メモ・試作は上がらない）
-rem  動作確認だけしたい時：deploy.bat --dry （コミットと push はしない）
-rem ============================================================
 chcp 65001 >nul
+rem  HOOP SIGHT (Fable) - publish to GitHub Pages. Double-click to run. Test only: deploy.bat --dry
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
