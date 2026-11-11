@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>HOOP SIGHT - バスケ作戦ボード</title>
+<meta name="description" content="なぞるだけで動く、バスケットボールの作戦ボード。リンク1本で選手に送れて、選手は自分の目線で確認できます。">
+<meta name="theme-color" content="#0e1a2b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon-48.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ホーム -->
+<main id="home" class="screen">
+  <header class="brand">
+    <div class="logo">HOOP <span>SIGHT</span></div>
+    <div class="tag">なぞる・見せる・送る</div>
+  </header>
+  <div class="homeBody">
+    <button id="bNew" class="primary big">＋ 新しい作戦をつくる</button>
+    <h2>自分の作戦</h2>
+    <div id="myList" class="list"></div>
+    <h2>見本の作戦</h2>
+    <div id="sampleList" class="list"></div>
+    <p class="foot">作戦はこの端末の中に保存されます。選手には「送る」でリンクを渡すだけ。選手側はインストールも登録もいりません。</p>
+  </div>
+</main>
+
+<!-- ボード -->
+<main id="board" class="screen" hidden>
+  <header class="top">
+    <button id="bHome" class="icon" aria-label="ホームへ">‹</button>
+    <input id="pName" maxlength="30" aria-label="作戦の名前" enterkeyhint="done">
+    <button id="bShare" class="accent">送る</button>
+    <button id="bMenu" class="icon" aria-label="メニュー">⋯</button>
+  </header>
+
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hint"></div>
+  </div>
+
+  <!-- つくる -->
+  <div id="editBar" class="bar">
+    <div id="steps" class="steps"></div>
+    <div class="row">
+      <button id="bUndo" class="ghost" aria-label="1つ戻す">↶ 戻す</button>
+      <button id="bForm" class="ghost">並び方</button>
+      <button id="bDef" class="ghost">守り</button>
+      <button id="bPlay" class="primary grow">▶ 再生</button>
+    </div>
+  </div>
+
+  <!-- みる -->
+  <div id="viewBar" class="bar" hidden>
+    <input id="seek" type="range" min="0" max="1000" value="0" aria-label="再生位置">
+    <div class="row">
+      <div class="seg" id="viewSeg">
+        <button data-v="top" class="on">真上</button>
+        <button data-v="tv">ななめ</button>
+        <button data-v="me">自分目線</button>
+      </div>
+      <button id="bMe" class="ghost grow">自分の番号</button>
+    </div>
+    <div class="row">
+      <button id="bEdit" class="ghost">✎ 直す</button>
+      <button id="bSpeed" class="ghost">速さ ×1</button>
+      <button id="bPlay2" class="primary grow">▶ 再生</button>
+    </div>
+  </div>
+</main>
+
+<!-- 下から出るメニュー -->
+<div id="shade" hidden></div>
+<div id="sheet" hidden>
+  <div id="sheetTitle"></div>
+  <div id="sheetBody"></div>
+  <button id="sheetClose" class="ghost wide">とじる</button>
+</div>
+<div id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

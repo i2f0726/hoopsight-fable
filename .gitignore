@@ -1,0 +1,12 @@
+# 公開するファイルだけを GitHub に上げる（メモは上げない）
+*
+!.gitignore
+!.gitattributes
+!index.html
+!style.css
+!app.js
+!sw.js
+!manifest.webmanifest
+!deploy.bat
+!icons/
+!icons/*.png

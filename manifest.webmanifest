@@ -1,0 +1,18 @@
+{
+  "name": "HOOP SIGHT - バスケ作戦ボード",
+  "short_name": "HOOP SIGHT",
+  "description": "なぞるだけで動く、バスケットボールの作戦ボード。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1a2b",
+  "theme_color": "#0e1a2b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
