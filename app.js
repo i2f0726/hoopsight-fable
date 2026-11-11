@@ -197,7 +197,7 @@ function stepShapes(p, C, k) {
     const mv = st.moves[id]; if (!mv) return;
     const L = dense(mv.pts).len, n = Math.max(8, Math.ceil(L / 0.12)), poly = [];
     for (let i = 0; i <= n; i++) poly.push(pathPoint(mv, C.S[k][id], i / n));
-    out.push({ id, kind: id[0] === 'd' ? 'def' : (id === h && !pass ? 'dribble' : 'cut'), poly, screen: !!mv.screen });
+    out.push({ id, kind: id[0] === 'd' ? 'def' : (id === h ? 'dribble' : 'cut'), poly, screen: !!mv.screen });
   });
   if (pl.P) out.push({ kind: 'pass', id: pass, poly: [at(pl.P.t0)[pl.P.from], at(pl.P.t1)[pass]] });
   if (pl.SH) out.push({ kind: 'shot', id: pl.SH.id, poly: [at(pl.SH.t0)[pl.SH.id], HOOP] });
@@ -473,28 +473,46 @@ const b64d = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, 
 const shareUrl = p => location.origin + location.pathname + '#p=' + b64e(JSON.stringify(pack(p)));
 
 /* 見本の作戦 */
-function sample(name, form, steps) {
-  const p = newPlay(name); p.id = 's-' + name; FORMS[form].forEach((q, i) => p.start['o' + (i + 1)] = q.slice());
+/* 見本は、オーパス版（作戦ボード\playbook.js）の6本と同じ動き。
+   座標はオーパス版のまま書いて、ここで向きを直す（オーパス版は横向き・右のゴール [X, Y]、こちらは x＝横幅・上のゴール）。
+   hero：ホームの動く見本で「自分目線」にする選手 */
+const fromOp = a => a.map(([X, Y]) => [Y, +(28 - X).toFixed(2)]);
+function sample(name, start, steps, hero) {
+  const p = newPlay(name); p.id = 's-' + name; p.hero = hero || 'o1';
+  for (const id in start) p.start[id] = fromOp([start[id]])[0];
   p.steps = steps.map(s => {
     const st = { moves: {}, pass: s.pass || null, shot: !!s.shot };
-    for (const id in s.m || {}) { st.moves[id] = { pts: s.m[id], screen: (s.screen || []).includes(id) }; if (s.w && s.w[id]) st.moves[id].w = s.w[id]; }
+    for (const id in s.m || {}) { st.moves[id] = { pts: fromOp(s.m[id]), screen: (s.screen || []).includes(id) }; if (s.w && s.w[id]) st.moves[id].w = s.w[id]; }
     return st;
   });
   return p;
 }
-const SAMPLES = [ // w：少し待ってから動く（秒）
-  sample('パス＆カット', '5アウト', [
+const FIVE_OUT = { o1: [17.4, 7.5], o2: [20.2, 2.4], o3: [20.2, 12.6], o4: [25.8, 1.6], o5: [25.8, 13.4] }; // トップ・両ウイング・両コーナー
+const SAMPLES = [ // w：少し待ってから動く（秒）。screen：動いた先で壁（スクリーン）になる
+  sample('パス＆カット', FIVE_OUT, [ // パスしたらすぐゴールへ走って、リターンパスをもらう（ギブ＆ゴー）
+    { m: { o4: [[25.8, 1.6], [24.6, 3.4]] }, pass: 'o2' },
+    { m: { o1: [[17.4, 7.5], [19.6, 6.6], [24.6, 7.1]], o3: [[20.2, 12.6], [18.2, 8.6]] }, pass: 'o1' },
+    { shot: 1 }], 'o1'),
+  sample('バックドア', FIVE_OUT, [ // パスをもらうふりで外へ上がり、守りの背中側からゴールへ
+    { m: { o2: [[20.2, 2.4], [18.9, 3.4]] } },
+    { m: { o2: [[18.9, 3.4], [21.6, 4.6], [25.2, 6.5]], o4: [[25.8, 1.6], [22.4, 1.4]] }, pass: 'o2' },
+    { shot: 1 }], 'o2'),
+  sample('ピック＆ロール', FIVE_OUT, [ // 5番がボールマンの守りの横で壁になり、1番がドリブル。5番はゴールへ転がる
+    { m: { o5: [[25.8, 13.4], [22.0, 11.6], [18.8, 8.15]] }, screen: ['o5'] },
+    { m: { o1: [[17.4, 7.5], [19.0, 9.8], [21.6, 10.6]], o5: [[18.8, 8.15], [21.4, 8.6], [24.7, 7.9]] }, w: { o5: 0.5 }, pass: 'o5' },
+    { shot: 1 }], 'o5'),
+  sample('スクリーンアウェイ', FIVE_OUT, [ // パスした人が反対側の味方の守りに壁を作り、味方がトップへ上がってパスをもらう
     { pass: 'o2' },
-    { m: { o1: [[7.5, 9.2], [8.7, 6.6], [8.0, 3.0]], o3: [[2.2, 6.8], [4.5, 8.7], [7.5, 9.2]], o4: [[1.3, 1.8], [1.3, 4.6], [2.2, 6.8]] }, w: { o3: 0.5, o4: 1.0 } },
-    { pass: 'o1', shot: 1 }]),
-  sample('ピック＆ロール', '3アウト2イン', [
-    { m: { o5: [[9.8, 3.0], [9.4, 6.6], [8.6, 8.9]] }, screen: ['o5'] },
-    { m: { o1: [[7.5, 9.4], [9.8, 8.8], [10.8, 6.4]], o5: [[8.6, 8.9], [8.7, 6.6], [8.0, 3.6]], o4: [[5.2, 3.0], [3.4, 2.2]] }, w: { o5: 0.6, o4: 0.3 } },
-    { pass: 'o5', shot: 1 }]),
-  sample('バックドア', '5アウト', [
-    { m: { o2: [[12.8, 6.8], [13.5, 8.0]] } },
-    { m: { o2: [[13.5, 8.0], [12.2, 5.6], [9.2, 2.6]] }, pass: 'o2' },
-    { shot: 1 }]),
+    { m: { o1: [[17.4, 7.5], [21.8, 7.9]], o3: [[20.2, 12.6], [20.8, 10.2], [19.8, 8.6], [17.2, 7.0]] }, screen: ['o1'], w: { o3: 0.9 }, pass: 'o3' },
+    { shot: 1 }], 'o3'),
+  sample('ドライブ＆キック', FIVE_OUT, [ // ゴールへドリブルで切り込み、守りが寄ったら外の空いた味方へパス
+    { m: { o1: [[17.4, 7.5], [20.5, 8.6], [23.4, 8.2]], o3: [[20.2, 12.6], [21.6, 13.6]], o5: [[25.8, 13.4], [24.2, 11.4]] } },
+    { pass: 'o3' },
+    { shot: 1 }], 'o3'),
+  sample('UCLAカット', { ...FIVE_OUT, o4: [25.8, 13.4], o5: [21.0, 5.2] }, [ // ハイポストの5番の壁を使ってゴールへ走る
+    { pass: 'o2' },
+    { m: { o1: [[17.4, 7.5], [20.0, 6.2], [22.4, 5.8], [25.0, 6.6]], o5: [[21.0, 5.2], [18.0, 7.4]] }, w: { o5: 1.1 }, pass: 'o1' },
+    { shot: 1 }], 'o1'),
 ];
 
 /* ───────── 画面の状態 ───────── */
@@ -558,7 +576,7 @@ function draw(dt) {
       o.paths.push({ shapes: stepShapes(p, C, k), alpha: 1 });
       for (const id in p.steps[k].moves) if (C.ids.includes(id)) o.ghosts.push({ id, at: C.S[k + 1][id] });
     }
-    if (drag && drag.pts && drag.pts.length > 1) o.paths.push({ shapes: [{ id: drag.id, kind: drag.id[0] === 'd' ? 'def' : (drag.id === C.H[k] && !validPass(p.steps[k], C.H[k], C.off) ? 'dribble' : 'cut'), poly: dense(drag.pts).p }], alpha: 0.9 });
+    if (drag && drag.pts && drag.pts.length > 1) o.paths.push({ shapes: [{ id: drag.id, kind: drag.id[0] === 'd' ? 'def' : (drag.id === C.H[k] ? 'dribble' : 'cut'), poly: dense(drag.pts).p }], alpha: 0.9 });
     if (cur.step === 0 && drag && drag.id) st.pos[drag.id] = startOf(p, drag.id);
     tfNow = drawTop(ctx, cw, ch, p, st, o);
     return;
@@ -1112,7 +1130,7 @@ function exportVideo() {
    見本の作戦を本物の描画でくり返し再生する。1周ごとに 真上 → ななめ → 自分目線 と視点を変え、3周で次の作戦へ。
    ホームを開いている間だけ動く。ボードの描画と同じ変数（cw・ch・cur.me など）を借りるので、作戦を開くときに必ず止める */
 const hero = { cv: $('#heroCv'), x: null, w: 0, h: 0, raf: 0, last: 0, n: 0, t: -0.3, prev: null, trans: null };
-const HERO_ME = ['o1', 'o5', 'o2'], HERO_VIEWS = ['top', 'tv', 'me'], HERO_LABEL = { top: '真上', tv: 'ななめ', me: '自分目線' };
+const HERO_VIEWS = ['top', 'tv', 'me'], HERO_LABEL = { top: '真上', tv: 'ななめ', me: '自分目線' };
 const heroPlay = () => SAMPLES[Math.floor(hero.n / 3) % SAMPLES.length];
 const stillOnly = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 function heroSize() {
@@ -1121,13 +1139,13 @@ function heroSize() {
   hero.x = hero.cv.getContext('2d'); hero.x.setTransform(d, 0, 0, d, 0, 0);
 }
 function heroCaption() {
-  const v = HERO_VIEWS[hero.n % 3], me = HERO_ME[Math.floor(hero.n / 3) % SAMPLES.length];
+  const v = HERO_VIEWS[hero.n % 3], me = heroPlay().hero;
   $('#heroCap').textContent = heroPlay().name + '・' + HERO_LABEL[v] + (v === 'me' ? '（' + me.slice(1) + '番）' : '');
 }
 function heroFrame(dt) {
   if (!hero.w) return;
   const p = heroPlay(), v = HERO_VIEWS[hero.n % 3], C = compile(p), x = hero.x, w = hero.w, h = hero.h;
-  cw = w; ch = h; cur.me = HERO_ME[Math.floor(hero.n / 3) % SAMPLES.length]; cur.lk = [0, 0];
+  cw = w; ch = h; cur.me = heroPlay().hero; cur.lk = [0, 0];
   const tt = clamp(hero.t, 0, C.total), [k] = timeToKU(C, tt), st = stateAtT(p, C, tt), shapes = stepShapes(p, C, k);
   cur.orbit = { yaw: -0.5 + tt / C.total, pitch: 0.55, zoom: 1 }; // ななめはゆっくり回りこむ
   const cam = camOf(v, p, st, dt);
