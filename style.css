@@ -63,6 +63,36 @@ h2{font-size:14px;color:var(--sub);margin:22px 0 8px;font-weight:600}
 .steps button.on{border-color:var(--accent);background:#2a3f60}
 .steps button.add{background:transparent;border:2px dashed var(--line);color:var(--sub)}
 .steps button.now{background:var(--blue)}
+.stepsRow .steps{flex:1;min-width:0}
+.tmBtn{flex:none;min-height:40px;padding:6px 10px!important;font-size:14px;border:2px solid transparent}
+.tmBtn.on{border-color:var(--accent);background:#2a3f60}
+
+/* タイミングの帯 */
+.timing{background:#0f1d31;border:1px solid var(--line);border-radius:12px;padding:6px 8px 4px;display:flex;flex-direction:column;gap:3px;user-select:none;-webkit-user-select:none;touch-action:none;max-height:38dvh;overflow:auto}
+.tmHead{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.tmHead b{flex:1;font-size:13px}
+.tmHead button{min-height:34px;padding:4px 12px;font-size:13px}
+.tmEmpty{font-size:12.5px;color:var(--sub);padding:4px 2px 6px}
+.tmRow{display:grid;grid-template-columns:50px 1fr 40px;align-items:center;gap:6px;min-height:30px}
+.tmLbl{font-size:12px;font-weight:700;color:var(--sub);text-align:center;white-space:nowrap}
+.tmLbl.o,.tmLbl.d{justify-self:center;width:24px;height:24px;border-radius:50%;color:#fff;display:grid;place-items:center;font-size:13px;border:1.5px solid rgba(255,255,255,.85)}
+.tmLbl.o{background:#1d3a8a}.tmLbl.d{background:#c8405a}
+.tmTrack{position:relative;height:28px;background:rgba(255,255,255,.05);border-radius:7px;overflow:hidden;cursor:grab}
+.tmRuler{height:18px;background:none;overflow:visible;cursor:pointer}
+.tmBar{position:absolute;top:3px;bottom:3px;min-width:12px;border-radius:7px;font-size:11px;font-weight:700;color:#fff;display:flex;align-items:center;padding-left:6px;white-space:nowrap;box-shadow:0 0 0 1.5px rgba(255,255,255,.35) inset}
+.tmBar.o{background:#3f6fd8}.tmBar.d{background:#d9566f}
+.tmBar.pass{background:rgba(255,138,31,.25);box-shadow:0 0 0 2px #ff8a1f inset;color:#ffd2a8}
+.tmBar.shot{background:#ff8a1f;color:#1a1205}
+.tmBar.drag{box-shadow:0 0 0 2px #fff inset,0 0 10px rgba(255,255,255,.4)}
+/* 待つ時間：点線と「1.0秒待つ」 */
+.tmWait{position:absolute;left:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;color:#b9c8dc;white-space:nowrap;padding-bottom:4px}
+.tmWait::before{content:"";position:absolute;left:2px;right:2px;bottom:5px;height:2px;background:repeating-linear-gradient(90deg,#6f86a8 0 4px,transparent 4px 8px)}
+.tmTick{position:absolute;top:1px;font-size:10.5px;color:var(--sub);transform:translateX(-50%);pointer-events:none;white-space:nowrap}
+.tmTick:first-child{transform:none}
+.tmTick.last{transform:translateX(-100%)}
+.tmNow{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:#fff;pointer-events:none;opacity:.85}
+.tmRuler .tmNow{top:-2px;bottom:-2px;width:3px;background:var(--accent);border-radius:2px}
+.tmAuto{min-height:26px;padding:0 4px!important;font-size:11.5px;background:var(--panel2);border-radius:8px}
 .seg{display:flex;background:var(--panel2);border-radius:12px;padding:3px}
 .seg button{background:transparent;min-height:38px;padding:6px 12px;border-radius:9px;color:var(--sub);font-size:14px}
 .seg button.on{background:var(--blue);color:#fff}
@@ -90,5 +120,6 @@ h2{font-size:14px;color:var(--sub);margin:22px 0 8px;font-weight:600}
 @media (min-width:760px){
   .bar{flex-direction:row;align-items:center;flex-wrap:wrap}
   .steps{flex:1}
+  .stepsRow,.timing{flex-basis:100%}
   #seek{flex:1;min-width:200px;width:auto}
 }

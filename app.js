@@ -105,26 +105,73 @@ function pathPoint(mv, start, u) {
   return [q[0] + (start[0] - mv.pts[0][0]) * k, q[1] + (start[1] - mv.pts[0][1]) * k];
 }
 
-/* 作戦全体の下ごしらえ：各ステップの出発位置・ボールを持つ人・長さ */
+/* 動きの時間。なぞった動き（tl あり）は、なぞった速さのまま。
+   tl＝0.1秒ごとに「線のどこまで進んだか」を 0〜1000 で記録したもの。w＝ステップの始まりから動き出すまで待つ秒数 */
+const DT = 0.1, LEG_SPEED = 4.2, PASS_V = 10, SHOT_T = 1.0;
+function moveTiming(mv) {
+  const w = Math.max(0, mv.w || 0), tl = mv.tl;
+  if (tl && tl.length > 1) {
+    const d = (tl.length - 1) * DT;
+    return { w, d, f: t => { const x = (t - w) / DT; if (x <= 0) return 0; if (x >= tl.length - 1) return 1; const i = Math.floor(x); return lerp(tl[i], tl[i + 1], x - i) / 1000; } };
+  }
+  const d = clamp(dense(mv.pts).len / LEG_SPEED, 0.6, 6.5); // 見本・前の版の作戦：一定の速さ
+  return { w, d, f: t => ease(clamp((t - w) / d, 0, 1)) };
+}
+/* なぞった指の記録 [x, y, ミリ秒] から tl を作る。押してから動き出すまでと、着いてから指を離すまでは数えない */
+function traceTiming(raw) {
+  if (!raw || raw.length < 2) return null;
+  let i0 = 1; while (i0 < raw.length - 1 && dist(raw[i0], raw[0]) < 0.15) i0++;
+  i0 = Math.max(0, i0 - 1);
+  const end = raw[raw.length - 1]; let i1 = raw.length - 1;
+  while (i1 > i0 + 1 && dist(raw[i1 - 1], end) < 0.25) i1--;
+  const R = raw.slice(i0, i1 + 1), ts = R.map(r => r[2]), s = [0];
+  for (let i = 1; i < R.length; i++) s.push(s[i - 1] + dist(R[i - 1], R[i]));
+  const tail = dist(R[R.length - 1], end); if (tail > 0.01) { ts.push(ts[ts.length - 1] + 60); s.push(s[s.length - 1] + tail); }
+  const tot = s[s.length - 1]; if (tot < 0.05) return null;
+  const T0 = ts[0], T1 = Math.max(ts[ts.length - 1], T0 + 200), n = Math.max(2, Math.round((T1 - T0) / 1000 / DT)), out = [];
+  let j = 0;
+  for (let q = 0; q <= n; q++) {
+    const t = T0 + (T1 - T0) * q / n;
+    while (j < ts.length - 2 && ts[j + 1] < t) j++;
+    const a = ts[j], b = ts[j + 1] ?? a, f = b > a ? clamp((t - a) / (b - a), 0, 1) : 1, v = lerp(s[j], s[j + 1] ?? s[j], f) / tot;
+    out.push(Math.max(out.length ? out[out.length - 1] : 0, Math.round(clamp(v, 0, 1) * 1000)));
+  }
+  out[0] = 0; out[out.length - 1] = 1000;
+  return out;
+}
+
+/* 作戦全体の下ごしらえ：各ステップの出発位置・ボールを持つ人・各動きの時間・パスとシュートの時刻・長さ */
 function compile(p) {
-  const ids = scripted(p), off = offIds(p), S = [{}], durs = [];
+  const ids = scripted(p), off = offIds(p), S = [{}], durs = [], P = [];
   ids.forEach(id => S[0][id] = startOf(p, id));
   const H = [off.includes(p.ball) ? p.ball : off[0]], LH = [H[0]];
   p.steps.forEach((st, k) => {
-    const n = {}; let mx = 0;
-    ids.forEach(id => { const mv = st.moves[id]; if (mv) { n[id] = mv.pts[mv.pts.length - 1]; mx = Math.max(mx, dense(mv.pts).len); } else n[id] = S[k][id]; });
+    const n = {}, T = {}; let end = 0;
+    ids.forEach(id => {
+      const mv = st.moves[id];
+      if (mv) { n[id] = mv.pts[mv.pts.length - 1]; const tm = T[id] = moveTiming(mv); end = Math.max(end, tm.w + tm.d); }
+      else n[id] = S[k][id];
+    });
     S.push(n);
-    let h = H[k]; const pass = validPass(st, h, off); if (pass) h = pass;
-    const lh = h || LH[k], shot = !!(st.shot && h); if (shot) h = null;
-    H.push(h); LH.push(lh);
-    let d = mx > 0 ? clamp(mx / 4.2, 0.9, p.full ? 6.5 : 2.8) : 0.5;
-    if (pass) d = Math.max(d, 0.8);
-    if (shot) d = Math.max(d, pass || mx > 0 ? 1.5 : 1.0);
-    durs.push(d);
+    const endOf = id => T[id] ? T[id].w + T[id].d : 0;
+    let h = H[k], PS = null, SH = null; const pass = validPass(st, h, off);
+    if (pass) { // ふつうは、出す人が動き終わってから。受ける人が走るなら、走り終わりに届くように出す
+      const F = clamp(dist(S[k][h], n[pass]) / PASS_V, 0.35, 0.9);
+      const a = st.pa != null ? Math.max(0, st.pa) : Math.max(endOf(h), endOf(pass) - F, 0);
+      PS = { from: h, to: pass, t0: a, t1: a + F }; end = Math.max(end, PS.t1); h = pass;
+    }
+    const lh = h || LH[k];
+    if (st.shot && h) { // ふつうは、ボールが届いて・自分が動き終わってから打つ
+      const lo = PS ? PS.t1 + 0.05 : 0;
+      const a = st.sa != null ? Math.max(lo, st.sa) : Math.max(PS ? PS.t1 + 0.15 : 0.15, endOf(h) + 0.05);
+      SH = { id: h, t0: a, t1: a + SHOT_T }; end = Math.max(end, SH.t1); h = null;
+    }
+    H.push(h); LH.push(lh); P.push({ T, P: PS, SH });
+    durs.push(Math.max(end, 0.5));
   });
   const GAP = 0.12, t0 = []; let t = 0;
   durs.forEach(d => { t0.push(t); t += d + GAP; });
-  return { ids, off, S, H, LH, durs, t0, total: t, GAP };
+  return { ids, off, S, H, LH, P, durs, t0, total: t, GAP };
 }
 function timeToKU(C, t) {
   const n = C.durs.length; if (!n) return [0, 0];
@@ -135,25 +182,18 @@ function timeToKU(C, t) {
 /* ステップ k の途中 u（0〜1）での全員の位置とボール */
 function stateAt(p, C, k, u) {
   const n = p.steps.length; if (k >= n) { k = n; u = 0; }
-  const st = p.steps[k], S = C.S[k], pos = {}, e = ease(u);
-  let hasMv = false;
-  C.ids.forEach(id => { const mv = st && st.moves[id]; if (mv) hasMv = true; pos[id] = mv ? pathPoint(mv, S[id], e) : S[id]; });
+  const st = p.steps[k], S = C.S[k], pl = C.P[k], t = u * (C.durs[k] || 0), pos = {};
+  C.ids.forEach(id => { const mv = st && st.moves[id]; pos[id] = mv ? pathPoint(mv, S[id], pl.T[id].f(t)) : S[id]; });
   const hold = id => [pos[id][0] + 0.42, pos[id][1] - 0.3, 1.0];
   let h = C.H[k], w = {}, ball, to = null;
   if (!h) { ball = [HOOP[0], HOOP[1] + 0.45, 0.12]; if (C.LH[k]) w[C.LH[k]] = 1; }
   else {
     ball = hold(h); w[h] = 1;
-    if (st) {
-      const pass = validPass(st, h, C.off), shot = st.shot;
-      if (pass) {
-        const a = 0.08, b = shot ? 0.45 : 0.7, f = clamp((u - a) / (b - a), 0, 1);
-        if (f >= 1) { h = pass; ball = hold(h); w = { [h]: 1 }; }
-        else if (f > 0) { const g = ease(f), A = hold(h), B = hold(pass); ball = [lerp(A[0], B[0], g), lerp(A[1], B[1], g), 1 + 0.5 * Math.sin(Math.PI * f)]; w = { [h]: 1 - g, [pass]: g }; to = pass; }
-      }
-      if (shot) {
-        const s0 = (pass || hasMv) ? 0.55 : 0.2;
-        if (u > s0) { const g = (u - s0) / (1 - s0), A = hold(h); ball = [lerp(A[0], HOOP[0], g), lerp(A[1], HOOP[1], g), lerp(2.1, RIM_H, g) + 4.4 * g * (1 - g)]; }
-      }
+    if (pl) {
+      const PS = pl.P, SH = pl.SH;
+      if (PS && t >= PS.t1) { h = PS.to; ball = hold(h); w = { [h]: 1 }; }
+      else if (PS && t > PS.t0) { const f = (t - PS.t0) / (PS.t1 - PS.t0), g = ease(f), A = hold(PS.from), B = hold(PS.to); ball = [lerp(A[0], B[0], g), lerp(A[1], B[1], g), 1 + 0.5 * Math.sin(Math.PI * f)]; w = { [PS.from]: 1 - g, [PS.to]: g }; to = PS.to; }
+      if (SH && t > SH.t0) { const g = clamp((t - SH.t0) / (SH.t1 - SH.t0), 0, 1), A = hold(SH.id); ball = [lerp(A[0], HOOP[0], g), lerp(A[1], HOOP[1], g), lerp(2.1, RIM_H, g) + 4.4 * g * (1 - g)]; }
     }
   }
   if (p.def === 'auto') defIds(p).forEach((id, i) => {
@@ -170,15 +210,15 @@ function stateAt(p, C, k, u) {
 /* ステップ k の図（走る線・ドリブル・パス・シュート） */
 function stepShapes(p, C, k) {
   const st = p.steps[k], out = []; if (!st) return out;
-  const h = C.H[k], pass = validPass(st, h, C.off);
+  const h = C.H[k], pl = C.P[k], pass = pl.P ? pl.P.to : null, at = t => stateAt(p, C, k, t / (C.durs[k] || 1)).pos;
   C.ids.forEach(id => {
     const mv = st.moves[id]; if (!mv) return;
     const L = dense(mv.pts).len, n = Math.max(8, Math.ceil(L / 0.12)), poly = [];
     for (let i = 0; i <= n; i++) poly.push(pathPoint(mv, C.S[k][id], i / n));
     out.push({ id, kind: id[0] === 'd' ? 'def' : (id === h && !pass ? 'dribble' : 'cut'), poly, screen: !!mv.screen });
   });
-  if (pass) out.push({ kind: 'pass', id: pass, poly: [stateAt(p, C, k, 0.08).pos[h], stateAt(p, C, k, st.shot ? 0.45 : 0.7).pos[pass]] });
-  if (st.shot && (pass || h)) { const s = pass || h; out.push({ kind: 'shot', id: s, poly: [stateAt(p, C, k, 0.6).pos[s], HOOP] }); }
+  if (pl.P) out.push({ kind: 'pass', id: pass, poly: [at(pl.P.t0)[pl.P.from], at(pl.P.t1)[pass]] });
+  if (pl.SH) out.push({ kind: 'shot', id: pl.SH.id, poly: [at(pl.SH.t0)[pl.SH.id], HOOP] });
   return out;
 }
 function resample(poly, step) {
@@ -415,10 +455,24 @@ function touch() { // 変更があったら少し待って保存
 function pack(p) {
   const r = v => Math.round(v * 10), s = {};
   scripted(p).forEach(id => { const q = startOf(p, id); s[id] = [r(q[0]), r(q[1])]; });
-  return { v: 1, n: p.name, c: p.full ? 1 : 0, o: p.no, d: p.nd, m: p.def[0], b: p.ball, s,
-    t: p.steps.map(st => { const m = {}, e = []; for (const id in st.moves) { m[id] = st.moves[id].pts.flatMap(q => [r(q[0]), r(q[1])]); if (st.moves[id].screen) e.push(id); }
-      const o = { m }; if (e.length) o.e = e; if (st.pass) o.p = st.pass; if (st.shot) o.h = 1; return o; }) };
+  return { v: 2, n: p.name, c: p.full ? 1 : 0, o: p.no, d: p.nd, m: p.def[0], b: p.ball, s,
+    t: p.steps.map(st => {
+      const m = {}, e = [], l = {}, w = {};
+      for (const id in st.moves) {
+        const mv = st.moves[id]; m[id] = mv.pts.flatMap(q => [r(q[0]), r(q[1])]);
+        if (mv.screen) e.push(id); if (mv.tl) l[id] = mv.tl; if (mv.w) w[id] = r(mv.w);
+      }
+      const o = { m }; if (e.length) o.e = e; if (Object.keys(l).length) o.l = l; if (Object.keys(w).length) o.w = w;
+      if (st.pass) o.p = st.pass; if (st.shot) o.h = 1; if (st.pa != null) o.pa = r(st.pa); if (st.sa != null) o.sa = r(st.sa);
+      return o;
+    }) };
 }
+function cleanTl(a) { // リンクから来た tl を確かめる（0〜1000 の増えていく数、60秒まで）
+  if (!Array.isArray(a) || a.length < 2 || a.length > 601) return null;
+  let prev = 0; const o = a.map(v => (prev = Math.max(prev, clamp(Math.round(+v || 0), 0, 1000))));
+  o[0] = 0; o[o.length - 1] = 1000; return o;
+}
+const tenth = v => clamp(Math.round(+v || 0), 0, 600) / 10;
 function unpack(c) {
   const p = newPlay(String(c.n || '作戦').slice(0, 30));
   p.full = !!c.c; p.no = clamp(c.o | 0, 1, 5); p.nd = clamp(c.d | 0, 0, 5); p.def = { a: 'auto', m: 'manual', o: 'off' }[c.m] || 'auto';
@@ -426,7 +480,13 @@ function unpack(c) {
   for (const id in c.s) if (/^[od][1-5]$/.test(id)) p.start[id] = [c.s[id][0] / 10, c.s[id][1] / 10];
   p.steps = (c.t || []).slice(0, 40).map(t => {
     const st = { moves: {}, pass: /^o[1-5]$/.test(t.p) ? t.p : null, shot: !!t.h };
-    for (const id in t.m || {}) { if (!/^[od][1-5]$/.test(id)) continue; const a = t.m[id], pts = []; for (let i = 0; i + 1 < a.length; i += 2) pts.push([a[i] / 10, a[i + 1] / 10]); if (pts.length > 1) st.moves[id] = { pts, screen: (t.e || []).includes(id) }; }
+    if (t.pa != null) st.pa = tenth(t.pa); if (t.sa != null) st.sa = tenth(t.sa);
+    for (const id in t.m || {}) {
+      if (!/^[od][1-5]$/.test(id)) continue; const a = t.m[id], pts = []; for (let i = 0; i + 1 < a.length; i += 2) pts.push([a[i] / 10, a[i + 1] / 10]);
+      if (pts.length < 2) continue;
+      const mv = st.moves[id] = { pts, screen: (t.e || []).includes(id) }, tl = cleanTl(t.l && t.l[id]), w = t.w && t.w[id];
+      if (tl) mv.tl = tl; if (w) mv.w = tenth(w);
+    }
     return st;
   });
   return p;
@@ -438,17 +498,21 @@ const shareUrl = p => location.origin + location.pathname + '#p=' + b64e(JSON.st
 /* 見本の作戦 */
 function sample(name, form, steps) {
   const p = newPlay(name); p.id = 's-' + name; FORMS[form].forEach((q, i) => p.start['o' + (i + 1)] = q.slice());
-  p.steps = steps.map(s => { const st = { moves: {}, pass: s.pass || null, shot: !!s.shot }; for (const id in s.m || {}) st.moves[id] = { pts: s.m[id], screen: (s.screen || []).includes(id) }; return st; });
+  p.steps = steps.map(s => {
+    const st = { moves: {}, pass: s.pass || null, shot: !!s.shot };
+    for (const id in s.m || {}) { st.moves[id] = { pts: s.m[id], screen: (s.screen || []).includes(id) }; if (s.w && s.w[id]) st.moves[id].w = s.w[id]; }
+    return st;
+  });
   return p;
 }
-const SAMPLES = [
+const SAMPLES = [ // w：少し待ってから動く（秒）
   sample('パス＆カット', '5アウト', [
     { pass: 'o2' },
-    { m: { o1: [[7.5, 9.2], [8.7, 6.6], [8.0, 3.0]], o3: [[2.2, 6.8], [4.5, 8.7], [7.5, 9.2]], o4: [[1.3, 1.8], [1.3, 4.6], [2.2, 6.8]] } },
+    { m: { o1: [[7.5, 9.2], [8.7, 6.6], [8.0, 3.0]], o3: [[2.2, 6.8], [4.5, 8.7], [7.5, 9.2]], o4: [[1.3, 1.8], [1.3, 4.6], [2.2, 6.8]] }, w: { o3: 0.5, o4: 1.0 } },
     { pass: 'o1', shot: 1 }]),
   sample('ピック＆ロール', '3アウト2イン', [
     { m: { o5: [[9.8, 3.0], [9.4, 6.6], [8.6, 8.9]] }, screen: ['o5'] },
-    { m: { o1: [[7.5, 9.4], [9.8, 8.8], [10.8, 6.4]], o5: [[8.6, 8.9], [8.7, 6.6], [8.0, 3.6]], o4: [[5.2, 3.0], [3.4, 2.2]] } },
+    { m: { o1: [[7.5, 9.4], [9.8, 8.8], [10.8, 6.4]], o5: [[8.6, 8.9], [8.7, 6.6], [8.0, 3.6]], o4: [[5.2, 3.0], [3.4, 2.2]] }, w: { o5: 0.6, o4: 0.3 } },
     { pass: 'o5', shot: 1 }]),
   sample('バックドア', '5アウト', [
     { m: { o2: [[12.8, 6.8], [13.5, 8.0]] } },
@@ -458,7 +522,8 @@ const SAMPLES = [
 
 /* ───────── 画面の状態 ───────── */
 const cv = $('#cv'), ctx = cv.getContext('2d');
-const cur = { play: null, shared: false, mode: 'edit', step: 0, view: 'top', me: null, t: 0, playing: false, speed: 1, undo: [], rec: null, look: null, orbit: null, focus: null, lk: [0, 0], lkBack: false, trans: null, quiz: null };
+const cur = { play: null, shared: false, mode: 'edit', step: 0, view: 'top', me: null, t: 0, playing: false, speed: 1, undo: [], rec: null, look: null, orbit: null, focus: null, lk: [0, 0], lkBack: false, trans: null, quiz: null,
+  timing: false, tp: 0, tpPlay: false }; // timing：タイミングの帯を開いている。tp：帯で見ている時刻（ステップの始まりからの秒）
 let cw = 0, ch = 0, tfNow = null, drag = null;
 
 function resize() {
@@ -508,7 +573,8 @@ function draw(dt) {
   const C = compile(p), n = p.steps.length;
   if (cur.mode === 'edit') {
     cur.step = clamp(cur.step, 0, n);
-    const k = cur.step - 1, st = stateAt(p, C, Math.max(0, k), 0), o = { paths: [], ghosts: [] };
+    const k = cur.step - 1, tu = k >= 0 && cur.timing ? clamp(cur.tp / (C.durs[k] || 1), 0, 1) : 0; // タイミングの帯で選んだ時刻
+    const st = stateAt(p, C, Math.max(0, k), tu), o = { paths: [], ghosts: [] };
     if (k >= 0) {
       if (k > 0) o.paths.push({ shapes: stepShapes(p, C, k - 1), alpha: 0.16 });
       o.paths.push({ shapes: stepShapes(p, C, k), alpha: 1 });
@@ -546,10 +612,15 @@ function tick(ts) { // 再生・視点の切り替え・首振りの戻り、動
     if (q && q.phase === 'run' && cur.t >= q.stopAt) { cur.t = q.stopAt; quizAsk(); }
     else if (cur.t >= C.total + 0.5) { cur.t = C.total; setPlaying(false); ended = true; }
   }
+  if (cur.tpPlay) { // タイミングの帯の「▶ 見る」：このステップだけを動かす
+    const C = compile(cur.play), d = C.durs[cur.step - 1] || 0;
+    cur.tp += dt * cur.speed; if (cur.tp >= d) { cur.tp = d; cur.tpPlay = false; syncTmPlay(); }
+    tmNow();
+  }
   if (cur.trans) { cur.trans.u += dt / 0.7; if (cur.trans.u >= 1) cur.trans = null; }
   if (cur.lkBack) { const k = Math.exp(-dt * 7); cur.lk = [cur.lk[0] * k, cur.lk[1] * k]; if (Math.abs(cur.lk[0]) + Math.abs(cur.lk[1]) < 0.01) { cur.lk = [0, 0]; cur.lkBack = false; } }
   draw(dt);
-  if (cur.playing || cur.trans || cur.lkBack) kick();
+  if (cur.playing || cur.trans || cur.lkBack || cur.tpPlay) kick();
   if (ended && cur.onEnd) { const f = cur.onEnd; cur.onEnd = null; f(); }
 }
 function setPlaying(on) {
@@ -595,7 +666,7 @@ function setMode(m) {
   $('#editBar').hidden = m !== 'edit'; $('#viewBar').hidden = m !== 'view';
   $('#bEdit').textContent = cur.shared ? '＋ 作戦集に入れる' : '✎ 直す';
   $('#pName').readOnly = cur.shared;
-  cur.quiz = null; cur.trans = null; cur.orbit = null; cur.focus = null; cur.lk = [0, 0]; cur.lkBack = false;
+  cur.quiz = null; cur.trans = null; cur.orbit = null; cur.focus = null; cur.lk = [0, 0]; cur.lkBack = false; cur.tp = 0; cur.tpPlay = false;
   if (m === 'view') { cur.t = 0; cur.look = null; } else cur.view = 'top';
   syncUI(); requestAnimationFrame(resize);
 }
@@ -613,11 +684,14 @@ function syncUI() {
   const hint = $('#hint'); hint.classList.toggle('dark', cur.mode === 'view' && ev !== 'top');
   hint.textContent = cur.mode === 'view' ? (qz ? (qz.phase === 'ask' ? `${cur.me.slice(1)}番は、次にどこへ動く？ コートをタップ` : '')
       : ev === 'tv' ? 'なぞる＝回す ／ 2本指＝寄る ／ ダブルタップ＝戻す' : ev === 'me' ? 'なぞる＝まわりを見る' : '') : cur.step === 0 ? '選手をドラッグして並べる ／ タップでボールを持たせる'
-    : 'なぞる＝走る ／ 味方をタップ＝パス ／ ゴール＝シュート';
+    : cur.timing ? '帯の棒を右へずらすと、その分だけ待ってから動きます'
+    : 'なぞる＝走る（なぞった速さのまま） ／ 味方をタップ＝パス ／ ゴール＝シュート';
+  $('#bTiming').hidden = cur.step === 0; $('#bTiming').classList.toggle('on', cur.timing);
+  renderTiming();
   draw();
 }
 function pickStep(i) {
-  const p = cur.play, n = p.steps.length;
+  const p = cur.play, n = p.steps.length; cur.tp = 0; cur.tpPlay = false;
   if (i > n) {
     const last = p.steps[n - 1];
     if (last && !Object.keys(last.moves).length && !last.pass && !last.shot) { cur.step = n; toast('このステップに動きを描いてから、次へ進みます'); }
@@ -713,16 +787,18 @@ function simplify(pts, eps) { // 点を間引く
 cv.addEventListener('pointerdown', e => {
   if (cur.mode !== 'edit') return viewDown(e);
   if (!tfNow) return;
+  if (cur.tp || cur.tpPlay) { cur.tp = 0; cur.tpPlay = false; tmNow(); } // タイミングの確認中でも、コートはステップの始まりに戻して描く
   const p = cur.play, C = compile(p), k = cur.step - 1, st = stateAt(p, C, Math.max(0, k), 0), q = evPos(e);
   let best = null, bd = 1.15;
   [...offIds(p), ...defIds(p)].forEach(id => { const d = dist(st.pos[id], q); if (d < bd) { bd = d; best = id; } });
-  drag = { id: best, down: q, moved: false, pts: null, C, k, st };
+  drag = { id: best, down: q, moved: false, pts: null, C, k, st, raw: [[q[0], q[1], performance.now()]] };
   try { cv.setPointerCapture(e.pointerId); } catch (_) {}
 });
 cv.addEventListener('pointermove', e => {
   if (cur.mode !== 'edit') return viewMove(e);
   if (!drag) return; const p = cur.play, q = limit(evPos(e), p);
   if (!drag.id) return;
+  drag.raw.push([q[0], q[1], performance.now()]); // なぞった速さを残すため、指の位置と時刻を全部とっておく
   const canMove = C_ids(drag).includes(drag.id);
   if (!drag.moved) {
     if (dist(q, drag.down) < 0.35) return;
@@ -740,8 +816,12 @@ function endDrag(e) {
   if (!drag) return; const d = drag, p = cur.play; drag = null;
   if (d.moved) {
     if (d.k >= 0) {
-      const pts = simplify(d.pts, 0.16);
-      if (dense(pts).len >= 0.6) p.steps[d.k].moves[d.id] = { pts, screen: false }; else cur.undo.pop();
+      const pts = simplify(d.pts, 0.16), prev = p.steps[d.k].moves[d.id];
+      if (dense(pts).len >= 0.6) { // なぞり直しても、待つ時間はそのまま
+        const mv = { pts, screen: false }, tl = traceTiming(d.raw);
+        if (tl) mv.tl = tl; if (prev && prev.w) mv.w = prev.w;
+        p.steps[d.k].moves[d.id] = mv;
+      } else cur.undo.pop();
     }
     touch(); syncUI(); return;
   }
@@ -799,6 +879,80 @@ function tap(d) {
     pushUndo(); st.shot = !st.shot; touch(); syncUI();
   }
 }
+
+/* ───────── タイミング：ステップの中で、だれがいつ動き出すか ─────────
+   1行に1つの動き（走る・パス・シュート）。棒を右へずらすと、その分だけ待ってから動く。
+   いちばん下の目盛りをなぞると、その時刻の位置をコートで見られる */
+const tmEl = $('#timing');
+let tmMax = 0, tmDrag = null;
+function tmRows() {
+  const p = cur.play, k = cur.step - 1, st = p.steps[k], C = compile(p), pl = C.P[k], rows = [];
+  if (!pl) return { rows, C, k };
+  C.ids.forEach(id => { const tm = pl.T[id]; if (tm) rows.push({ kind: 'mv', id, t0: tm.w, t1: tm.w + tm.d }); });
+  if (pl.P) rows.push({ kind: 'pass', id: pl.P.from, to: pl.P.to, t0: pl.P.t0, t1: pl.P.t1, fixed: st.pa != null });
+  if (pl.SH) rows.push({ kind: 'shot', id: pl.SH.id, t0: pl.SH.t0, t1: pl.SH.t1, fixed: st.sa != null });
+  return { rows, C, k };
+}
+const pctOf = t => (clamp(t / tmMax, 0, 1) * 100).toFixed(2) + '%';
+function renderTiming() {
+  const show = !!(cur.play && cur.mode === 'edit' && cur.timing && cur.step > 0);
+  tmEl.hidden = !show; if (!show) return;
+  const { rows, C, k } = tmRows();
+  if (!tmDrag) tmMax = Math.max(3, Math.ceil((C.durs[k] || 0) + 0.6));
+  let h = `<div class="tmHead"><b>ステップ ${cur.step} のタイミング</b><button id="tmPlay" class="ghost">${cur.tpPlay ? '❚❚ 止める' : '▶ 見る'}</button></div>`;
+  if (!rows.length) h += '<div class="tmEmpty">このステップには、まだ動きがありません。コートでなぞってください。</div>';
+  rows.forEach((r, i) => {
+    const lbl = r.kind === 'mv' ? `<span class="tmLbl ${r.id[0]}">${r.id.slice(1)}</span>` : `<span class="tmLbl">${r.kind === 'pass' ? 'パス' : 'シュート'}</span>`;
+    const wait = r.t0 >= 0.05 ? `<div class="tmWait" style="width:${pctOf(r.t0)}">${r.t0 >= 0.3 ? r.t0.toFixed(1) + '秒待つ' : ''}</div>` : '';
+    const txt = r.kind === 'pass' ? `${r.id.slice(1)}→${r.to.slice(1)}` : '';
+    const auto = r.fixed ? `<button class="tmAuto" data-auto="${r.kind}" aria-label="自動の時刻に戻す">自動</button>` : '<span></span>';
+    const dg = tmDrag && tmDrag.row && tmDrag.row.kind === r.kind && tmDrag.row.id === r.id ? ' drag' : '';
+    h += `<div class="tmRow">${lbl}<div class="tmTrack" data-i="${i}">${wait}<div class="tmBar ${r.kind === 'mv' ? r.id[0] : r.kind}${dg}" style="left:${pctOf(r.t0)};width:${pctOf(r.t1 - r.t0)}">${txt}</div><i class="tmNow"></i></div>${auto}</div>`;
+  });
+  const stp = tmMax > 8 ? 2 : 1; let ticks = '';
+  for (let s = 0; s <= tmMax; s += stp) ticks += `<span class="tmTick${s + stp > tmMax ? ' last' : ''}" style="left:${pctOf(s)}">${s}${s === 0 ? '' : '秒'}</span>`;
+  h += `<div class="tmRow"><span></span><div class="tmTrack tmRuler" data-i="-1">${ticks}<i class="tmNow"></i></div><span></span></div>`;
+  tmEl.innerHTML = h; tmNow();
+}
+function tmNow() { if (tmEl.hidden) return; tmEl.querySelectorAll('.tmNow').forEach(x => x.style.left = pctOf(cur.tp)); }
+function syncTmPlay() { const b = $('#tmPlay'); if (b) b.textContent = cur.tpPlay ? '❚❚ 止める' : '▶ 見る'; }
+tmEl.addEventListener('click', e => {
+  if (e.target.id === 'tmPlay') {
+    const d = compile(cur.play).durs[cur.step - 1] || 0;
+    if (cur.tpPlay) cur.tpPlay = false; else { if (cur.tp >= d - 0.01) cur.tp = 0; cur.tpPlay = true; kick(); }
+    syncTmPlay(); return;
+  }
+  const a = e.target.dataset.auto; if (!a) return;
+  const st = cur.play.steps[cur.step - 1]; pushUndo(); delete st[a === 'pass' ? 'pa' : 'sa']; touch(); syncUI();
+});
+tmEl.addEventListener('pointerdown', e => {
+  const tr = e.target.closest('.tmTrack'); if (!tr || e.target.closest('button')) return;
+  const i = +tr.dataset.i, r = tr.getBoundingClientRect(), px = r.width / tmMax;
+  cur.tpPlay = false; syncTmPlay();
+  if (i < 0) { tmDrag = { scrub: true, r }; cur.tp = clamp((e.clientX - r.left) / px, 0, tmMax); tmNow(); draw(); }
+  else { const row = tmRows().rows[i]; if (!row) return; tmDrag = { row, x: e.clientX, t0: row.t0, px, pushed: false }; renderTiming(); }
+  try { tmEl.setPointerCapture(e.pointerId); } catch (_) {}
+  e.preventDefault();
+});
+tmEl.addEventListener('pointermove', e => {
+  const g = tmDrag; if (!g) return;
+  if (g.scrub) { cur.tp = clamp((e.clientX - g.r.left) / (g.r.width / tmMax), 0, tmMax); tmNow(); draw(); return; }
+  if (!g.pushed && Math.abs(e.clientX - g.x) < 5) return; // 触っただけでは変えない
+  const nt = Math.max(0, Math.round((g.t0 + (e.clientX - g.x) / g.px) * 10) / 10);
+  const st = cur.play.steps[cur.step - 1], r = g.row;
+  if (!g.pushed) { pushUndo(); g.pushed = true; }
+  if (r.kind === 'mv') { if (nt > 0) st.moves[r.id].w = nt; else delete st.moves[r.id].w; }
+  else st[r.kind === 'pass' ? 'pa' : 'sa'] = nt;
+  cur.tp = nt; // その動きが始まる瞬間を、コートで見せる
+  renderTiming(); draw();
+});
+function tmUp() { if (!tmDrag) return; const g = tmDrag; tmDrag = null; if (g.pushed) touch(); renderTiming(); draw(); }
+tmEl.addEventListener('pointerup', tmUp); tmEl.addEventListener('pointercancel', tmUp);
+$('#bTiming').onclick = () => {
+  cur.timing = !cur.timing; cur.tp = 0; cur.tpPlay = false;
+  if (cur.timing && cur.step > 0 && !cur.play.steps[cur.step - 1]) cur.timing = false;
+  syncUI(); requestAnimationFrame(resize);
+};
 
 /* ───────── ボタン ───────── */
 $('#bNew').onclick = () => { const p = newPlay(); openPlay(p, false, 'edit'); toast('まず並び方を決めて、「＋ 次の動き」へ'); cur.step = 0; syncUI(); };
@@ -940,5 +1094,5 @@ function boot() {
 window.addEventListener('hashchange', () => { if (/[#&]p=/.test(location.hash)) boot(); });
 boot();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-window.HS = { cur, compile, stateAt, draw, resize, pack, shareUrl, plays: () => plays }; // 確認用
+window.HS = { cur, compile, stateAt, draw, resize, pack, unpack, shareUrl, plays: () => plays, tf: () => tfNow }; // 確認用
 })();
