@@ -105,39 +105,11 @@ function pathPoint(mv, start, u) {
   return [q[0] + (start[0] - mv.pts[0][0]) * k, q[1] + (start[1] - mv.pts[0][1]) * k];
 }
 
-/* 動きの時間。なぞった動き（tl あり）は、なぞった速さのまま。
-   tl＝0.1秒ごとに「線のどこまで進んだか」を 0〜1000 で記録したもの。w＝ステップの始まりから動き出すまで待つ秒数 */
-const DT = 0.1, LEG_SPEED = 4.2, PASS_V = 10, SHOT_T = 1.0;
+/* 動きの時間。速さは一定（線の長さで決まる）。w＝ステップの始まりから動き出すまで待つ秒数 */
+const SPEED = 4.2, PASS_V = 10, SHOT_T = 1.0;
 function moveTiming(mv) {
-  const w = Math.max(0, mv.w || 0), tl = mv.tl;
-  if (tl && tl.length > 1) {
-    const d = (tl.length - 1) * DT;
-    return { w, d, f: t => { const x = (t - w) / DT; if (x <= 0) return 0; if (x >= tl.length - 1) return 1; const i = Math.floor(x); return lerp(tl[i], tl[i + 1], x - i) / 1000; } };
-  }
-  const d = clamp(dense(mv.pts).len / LEG_SPEED, 0.6, 6.5); // 見本・前の版の作戦：一定の速さ
+  const w = Math.max(0, mv.w || 0), d = clamp(dense(mv.pts).len / SPEED, 0.6, 6.5);
   return { w, d, f: t => ease(clamp((t - w) / d, 0, 1)) };
-}
-/* なぞった指の記録 [x, y, ミリ秒] から tl を作る。押してから動き出すまでと、着いてから指を離すまでは数えない */
-function traceTiming(raw) {
-  if (!raw || raw.length < 2) return null;
-  let i0 = 1; while (i0 < raw.length - 1 && dist(raw[i0], raw[0]) < 0.15) i0++;
-  i0 = Math.max(0, i0 - 1);
-  const end = raw[raw.length - 1]; let i1 = raw.length - 1;
-  while (i1 > i0 + 1 && dist(raw[i1 - 1], end) < 0.25) i1--;
-  const R = raw.slice(i0, i1 + 1), ts = R.map(r => r[2]), s = [0];
-  for (let i = 1; i < R.length; i++) s.push(s[i - 1] + dist(R[i - 1], R[i]));
-  const tail = dist(R[R.length - 1], end); if (tail > 0.01) { ts.push(ts[ts.length - 1] + 60); s.push(s[s.length - 1] + tail); }
-  const tot = s[s.length - 1]; if (tot < 0.05) return null;
-  const T0 = ts[0], T1 = Math.max(ts[ts.length - 1], T0 + 200), n = Math.max(2, Math.round((T1 - T0) / 1000 / DT)), out = [];
-  let j = 0;
-  for (let q = 0; q <= n; q++) {
-    const t = T0 + (T1 - T0) * q / n;
-    while (j < ts.length - 2 && ts[j + 1] < t) j++;
-    const a = ts[j], b = ts[j + 1] ?? a, f = b > a ? clamp((t - a) / (b - a), 0, 1) : 1, v = lerp(s[j], s[j + 1] ?? s[j], f) / tot;
-    out.push(Math.max(out.length ? out[out.length - 1] : 0, Math.round(clamp(v, 0, 1) * 1000)));
-  }
-  out[0] = 0; out[out.length - 1] = 1000;
-  return out;
 }
 
 /* 作戦全体の下ごしらえ：各ステップの出発位置・ボールを持つ人・各動きの時間・パスとシュートの時刻・長さ */
@@ -457,20 +429,15 @@ function pack(p) {
   scripted(p).forEach(id => { const q = startOf(p, id); s[id] = [r(q[0]), r(q[1])]; });
   return { v: 2, n: p.name, c: p.full ? 1 : 0, o: p.no, d: p.nd, m: p.def[0], b: p.ball, s,
     t: p.steps.map(st => {
-      const m = {}, e = [], l = {}, w = {};
+      const m = {}, e = [], w = {};
       for (const id in st.moves) {
         const mv = st.moves[id]; m[id] = mv.pts.flatMap(q => [r(q[0]), r(q[1])]);
-        if (mv.screen) e.push(id); if (mv.tl) l[id] = mv.tl; if (mv.w) w[id] = r(mv.w);
+        if (mv.screen) e.push(id); if (mv.w) w[id] = r(mv.w);
       }
-      const o = { m }; if (e.length) o.e = e; if (Object.keys(l).length) o.l = l; if (Object.keys(w).length) o.w = w;
+      const o = { m }; if (e.length) o.e = e; if (Object.keys(w).length) o.w = w;
       if (st.pass) o.p = st.pass; if (st.shot) o.h = 1; if (st.pa != null) o.pa = r(st.pa); if (st.sa != null) o.sa = r(st.sa);
       return o;
     }) };
-}
-function cleanTl(a) { // リンクから来た tl を確かめる（0〜1000 の増えていく数、60秒まで）
-  if (!Array.isArray(a) || a.length < 2 || a.length > 601) return null;
-  let prev = 0; const o = a.map(v => (prev = Math.max(prev, clamp(Math.round(+v || 0), 0, 1000))));
-  o[0] = 0; o[o.length - 1] = 1000; return o;
 }
 const tenth = v => clamp(Math.round(+v || 0), 0, 600) / 10;
 function unpack(c) {
@@ -484,8 +451,8 @@ function unpack(c) {
     for (const id in t.m || {}) {
       if (!/^[od][1-5]$/.test(id)) continue; const a = t.m[id], pts = []; for (let i = 0; i + 1 < a.length; i += 2) pts.push([a[i] / 10, a[i + 1] / 10]);
       if (pts.length < 2) continue;
-      const mv = st.moves[id] = { pts, screen: (t.e || []).includes(id) }, tl = cleanTl(t.l && t.l[id]), w = t.w && t.w[id];
-      if (tl) mv.tl = tl; if (w) mv.w = tenth(w);
+      const mv = st.moves[id] = { pts, screen: (t.e || []).includes(id) }, w = t.w && t.w[id];
+      if (w) mv.w = tenth(w);
     }
     return st;
   });
@@ -685,7 +652,7 @@ function syncUI() {
   hint.textContent = cur.mode === 'view' ? (qz ? (qz.phase === 'ask' ? `${cur.me.slice(1)}番は、次にどこへ動く？ コートをタップ` : '')
       : ev === 'tv' ? 'なぞる＝回す ／ 2本指＝寄る ／ ダブルタップ＝戻す' : ev === 'me' ? 'なぞる＝まわりを見る' : '') : cur.step === 0 ? '選手をドラッグして並べる ／ タップでボールを持たせる'
     : cur.timing ? '帯の棒を右へずらすと、その分だけ待ってから動きます'
-    : 'なぞる＝走る（なぞった速さのまま） ／ 味方をタップ＝パス ／ ゴール＝シュート';
+    : 'なぞる＝走る ／ 味方をタップ＝パス ／ ゴール＝シュート';
   $('#bTiming').hidden = cur.step === 0; $('#bTiming').classList.toggle('on', cur.timing);
   renderTiming();
   draw();
@@ -791,14 +758,13 @@ cv.addEventListener('pointerdown', e => {
   const p = cur.play, C = compile(p), k = cur.step - 1, st = stateAt(p, C, Math.max(0, k), 0), q = evPos(e);
   let best = null, bd = 1.15;
   [...offIds(p), ...defIds(p)].forEach(id => { const d = dist(st.pos[id], q); if (d < bd) { bd = d; best = id; } });
-  drag = { id: best, down: q, moved: false, pts: null, C, k, st, raw: [[q[0], q[1], performance.now()]] };
+  drag = { id: best, down: q, moved: false, pts: null, C, k, st };
   try { cv.setPointerCapture(e.pointerId); } catch (_) {}
 });
 cv.addEventListener('pointermove', e => {
   if (cur.mode !== 'edit') return viewMove(e);
   if (!drag) return; const p = cur.play, q = limit(evPos(e), p);
   if (!drag.id) return;
-  drag.raw.push([q[0], q[1], performance.now()]); // なぞった速さを残すため、指の位置と時刻を全部とっておく
   const canMove = C_ids(drag).includes(drag.id);
   if (!drag.moved) {
     if (dist(q, drag.down) < 0.35) return;
@@ -818,8 +784,8 @@ function endDrag(e) {
     if (d.k >= 0) {
       const pts = simplify(d.pts, 0.16), prev = p.steps[d.k].moves[d.id];
       if (dense(pts).len >= 0.6) { // なぞり直しても、待つ時間はそのまま
-        const mv = { pts, screen: false }, tl = traceTiming(d.raw);
-        if (tl) mv.tl = tl; if (prev && prev.w) mv.w = prev.w;
+        const mv = { pts, screen: false };
+        if (prev && prev.w) mv.w = prev.w;
         p.steps[d.k].moves[d.id] = mv;
       } else cur.undo.pop();
     }
