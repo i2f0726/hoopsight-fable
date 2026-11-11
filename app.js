@@ -631,6 +631,7 @@ function pickStep(i) {
   const on = $('#steps .on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 function openPlay(p, shared, mode) {
+  heroStop();
   cur.play = p; cur.shared = !!shared; cur.step = shared ? 0 : Math.min(1, p.steps.length); cur.undo = []; cur.t = 0;
   cur.me = null; const m = localStorage.getItem(KEY_ME); if (m && offIds(p).includes(m) && shared) cur.me = m;
   $('#home').hidden = true; $('#board').hidden = false; setMode(mode || (shared ? 'view' : 'edit'));
@@ -664,6 +665,7 @@ function renderHome() {
   if (!plays.length) my.innerHTML = '<div class="empty">まだ作戦がありません。「新しい作戦をつくる」か、下の見本を開いてみてください。</div>';
   plays.forEach(p => my.appendChild(mk(p, false)));
   const sm = $('#sampleList'); sm.innerHTML = ''; SAMPLES.forEach(p => sm.appendChild(mk(p, true)));
+  heroStart();
 }
 function duplicate(p) { const q = clone(p); q.id = newPlay().id; q.name = (p.name + ' のコピー').slice(0, 30); q.updated = Date.now(); plays.unshift(q); persist(); return q; }
 function removePlay(p) {
@@ -881,6 +883,57 @@ function exportVideo() {
   cur.rec = rec; cur.t = 0; cur.look = null; const sp = cur.speed; cur.speed = 1; draw(); rec.start(); toast('動画をつくっています…');
   setTimeout(() => { cur.onEnd = () => setTimeout(() => { cur.speed = sp; rec.stop(); }, 500); setPlaying(true); }, 500);
 }
+
+/* ───────── ホームの動く見本 ─────────
+   見本の作戦を本物の描画でくり返し再生する。1周ごとに 真上 → ななめ → 自分目線 と視点を変え、3周で次の作戦へ。
+   ホームを開いている間だけ動く。ボードの描画と同じ変数（cw・ch・cur.me など）を借りるので、作戦を開くときに必ず止める */
+const hero = { cv: $('#heroCv'), x: null, w: 0, h: 0, raf: 0, last: 0, n: 0, t: -0.3, prev: null, trans: null };
+const HERO_ME = ['o1', 'o5', 'o2'], HERO_VIEWS = ['top', 'tv', 'me'], HERO_LABEL = { top: '真上', tv: 'ななめ', me: '自分目線' };
+const heroPlay = () => SAMPLES[Math.floor(hero.n / 3) % SAMPLES.length];
+const stillOnly = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+function heroSize() {
+  const r = hero.cv.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, 2);
+  hero.w = r.width; hero.h = r.height; hero.cv.width = Math.max(1, Math.round(r.width * d)); hero.cv.height = Math.max(1, Math.round(r.height * d));
+  hero.x = hero.cv.getContext('2d'); hero.x.setTransform(d, 0, 0, d, 0, 0);
+}
+function heroCaption() {
+  const v = HERO_VIEWS[hero.n % 3], me = HERO_ME[Math.floor(hero.n / 3) % SAMPLES.length];
+  $('#heroCap').textContent = heroPlay().name + '・' + HERO_LABEL[v] + (v === 'me' ? '（' + me.slice(1) + '番）' : '');
+}
+function heroFrame(dt) {
+  if (!hero.w) return;
+  const p = heroPlay(), v = HERO_VIEWS[hero.n % 3], C = compile(p), x = hero.x, w = hero.w, h = hero.h;
+  cw = w; ch = h; cur.me = HERO_ME[Math.floor(hero.n / 3) % SAMPLES.length]; cur.lk = [0, 0];
+  const tt = clamp(hero.t, 0, C.total), [k, u] = timeToKU(C, tt), st = stateAt(p, C, k, u), shapes = stepShapes(p, C, k);
+  cur.orbit = { yaw: -0.5 + tt / C.total, pitch: 0.55, zoom: 1 }; // ななめはゆっくり回りこむ
+  const cam = camOf(v, p, st, dt);
+  if (hero.trans) drawPersp(x, w, h, p, st, mixCam(hero.trans.from, cam, hero.trans.u), { shapes, me: cur.me, fade: true, onlyMine: v === 'me' });
+  else if (v === 'top') drawTop(x, w, h, p, st, { paths: [{ shapes, alpha: 0.4 }], me: cur.me });
+  else drawPersp(x, w, h, p, st, cam, { shapes, me: cur.me, hide: v === 'me' ? cur.me : null, fade: v === 'me', onlyMine: v === 'me', cue: true });
+  hero.prev = cam;
+}
+function heroTick(ts) {
+  hero.raf = 0; if ($('#home').hidden) return;
+  const dt = clamp((ts - hero.last) / 1000, 0, 0.05); hero.last = ts;
+  hero.t += dt * 0.85;
+  if (hero.trans) { hero.trans.u += dt / 0.9; if (hero.trans.u >= 1) hero.trans = null; }
+  if (hero.t > compile(heroPlay()).total + 0.9) { // 1周おわり：次の視点へカメラをすべらせる
+    hero.n++; hero.t = -0.3; cur.look = null; cur.focus = null;
+    if (hero.prev) hero.trans = { from: hero.prev, u: 0 };
+    heroCaption();
+  }
+  heroFrame(dt); hero.raf = requestAnimationFrame(heroTick);
+}
+function heroStart() {
+  heroSize(); heroCaption();
+  if (stillOnly()) { hero.n = 1; hero.t = 2.2; heroCaption(); heroFrame(null); return; } // 動きを減らす設定の人には止めた絵
+  heroFrame(null);
+  if (!hero.raf) { hero.last = performance.now(); hero.raf = requestAnimationFrame(heroTick); }
+}
+function heroStop() { cancelAnimationFrame(hero.raf); hero.raf = 0; hero.trans = null; cur.orbit = null; cur.look = null; cur.focus = null; cur.me = null; }
+$('#hero').onclick = () => openPlay(clone(heroPlay()), true);
+$('#hero').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#hero').click(); } };
+window.addEventListener('resize', () => { if (!$('#home').hidden) { heroSize(); heroFrame(null); } });
 
 /* ───────── はじまり ───────── */
 function boot() {
