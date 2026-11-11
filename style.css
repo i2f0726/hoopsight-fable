@@ -44,6 +44,10 @@ h2{font-size:14px;color:var(--sub);margin:22px 0 8px;font-weight:600}
 .card .more{position:absolute;right:2px;bottom:6px;background:transparent;min-height:40px;min-width:40px;padding:0;font-size:20px;color:var(--sub)}
 .empty{color:var(--sub);font-size:13px;padding:14px;border:1px dashed var(--line);border-radius:14px;grid-column:1/-1}
 .foot{color:var(--sub);font-size:12px;margin-top:26px}
+.secHead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:22px 0 8px}
+.secHead h2{margin:0}
+.small{min-height:36px;padding:6px 12px;font-size:13px}
+.bkNote{display:block;width:100%;text-align:left;background:rgba(255,138,31,.14);border:1px solid rgba(255,138,31,.55);color:#ffd2a8;font-size:13px;margin-bottom:10px;min-height:42px;white-space:normal}
 
 /* ボード */
 .top{display:flex;align-items:center;gap:6px;padding:calc(6px + env(safe-area-inset-top)) 8px 6px}
@@ -112,6 +116,8 @@ h2{font-size:14px;color:var(--sub);margin:22px 0 8px;font-weight:600}
 #sheetBody .lbl{color:var(--sub);font-size:13px;margin:6px 4px 0}
 #sheetBody .nums{display:flex;gap:6px}
 #sheetBody .nums button{flex:1;align-items:center;font-size:17px;padding:10px 0}
+#sheetBody .bkInfo{color:var(--sub);font-size:13px;margin:0 4px 2px}
+#sheetBody textarea{width:100%;min-height:110px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0e1a2b;color:var(--text);font:12px/1.4 ui-monospace,Consolas,monospace;word-break:break-all;resize:vertical}
 #sheetBody .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 #toast{position:fixed;left:50%;top:calc(64px + env(safe-area-inset-top));transform:translateX(-50%);z-index:20;
   background:#f4f7fb;color:#12233a;padding:10px 16px;border-radius:999px;font-size:14px;font-weight:600;max-width:90vw;text-align:center;

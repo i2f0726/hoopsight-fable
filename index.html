@@ -26,7 +26,8 @@
       <div id="heroGo">さわって開く ›</div>
     </div>
     <button id="bNew" class="primary big">＋ 新しい作戦をつくる</button>
-    <h2>自分の作戦</h2>
+    <div class="secHead"><h2>自分の作戦</h2><button id="bBackup" class="ghost small">⇅ バックアップ</button></div>
+    <button id="bkNote" class="bkNote" hidden></button>
     <div id="myList" class="list"></div>
     <h2>見本の作戦</h2>
     <div id="sampleList" class="list"></div>
@@ -91,6 +92,7 @@
   <button id="sheetClose" class="ghost wide">とじる</button>
 </div>
 <div id="toast" hidden></div>
+<input type="file" id="bkFile" accept=".json,.txt,application/json,text/plain" hidden>
 
 <script src="app.js"></script>
 </body>

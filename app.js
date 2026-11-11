@@ -712,6 +712,7 @@ function renderHome() {
   const my = $('#myList'); my.innerHTML = '';
   if (!plays.length) my.innerHTML = '<div class="empty">まだ作戦がありません。「新しい作戦をつくる」か、下の見本を開いてみてください。</div>';
   plays.forEach(p => my.appendChild(mk(p, false)));
+  renderBackupNote();
   const sm = $('#sampleList'); sm.innerHTML = ''; SAMPLES.forEach(p => sm.appendChild(mk(p, true)));
   heroStart();
 }
@@ -931,6 +932,102 @@ $('#bTiming').onclick = () => {
   syncUI(); requestAnimationFrame(resize);
 };
 
+/* ───────── バックアップ：すべての作戦を1つのファイル（またはコード）にして、別の端末へ移す ─────────
+   中身は共有リンクと同じ形（pack）に id と更新日時をつけたもの。読み込みは今ある作戦を消さずに足す。
+   同じ作戦が両方にあるときは、更新日時が新しいほうを残す */
+const KEY_BK = 'hs2-backup', CODE_MAX = 9500; // LINE の1回のメッセージは約1万文字まで
+const lastBackup = () => { try { return +(localStorage.getItem(KEY_BK) || 0); } catch (e) { return 0; } };
+const ymd = () => { const d = new Date(), z = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`; };
+const agoText = ts => { const d = Math.floor((Date.now() - ts) / 864e5); return d <= 0 ? '今日' : d + '日前'; };
+function markBackup() {
+  try { localStorage.setItem(KEY_BK, String(Date.now())); } catch (e) {}
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(x => x || navigator.storage.persist()).catch(() => {}); } catch (e) {} // ブラウザに「消さないで」と頼む
+  if (!$('#home').hidden) renderHome();
+}
+function backupData() { return { app: 'hoopsight', v: 1, at: Date.now(), plays: plays.map(p => ({ id: p.id, u: p.updated || 0, d: pack(p) })) }; }
+const backupJson = () => JSON.stringify(backupData());
+function u8ToB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+const b64ToU8 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+async function zip(data, out) { // out=true：縮める／false：戻す
+  const st = new Blob([data]).stream().pipeThrough(out ? new CompressionStream('deflate-raw') : new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(st).arrayBuffer());
+}
+async function backupCode() { // HS1:縮めたもの ／ 縮められないブラウザは HS0:そのまま
+  const j = backupJson();
+  return window.CompressionStream ? 'HS1:' + u8ToB64(await zip(j, true)) : 'HS0:' + u8ToB64(new TextEncoder().encode(j));
+}
+async function parseBackup(text) { // バックアップのファイル・コード・共有リンクのどれでも読む
+  const t = String(text || '').trim(), m = /^HS([01]):([\w-]+)$/.exec(t.replace(/\s+/g, ''));
+  if (m) { const u8 = b64ToU8(m[2]); return JSON.parse(new TextDecoder().decode(m[1] === '1' ? await zip(u8, false) : u8)); }
+  const l = /[#&]p=([\w-]+)/.exec(t); if (l) return { plays: [{ d: JSON.parse(b64d(l[1])) }] };
+  const o = JSON.parse(t); return o && o.t ? { plays: [{ d: o }] } : o;
+}
+function importData(obj) {
+  if (!obj || !Array.isArray(obj.plays)) throw new Error('バックアップではありません');
+  const r = { add: 0, upd: 0, same: 0, bad: 0 };
+  obj.plays.slice(0, 1000).forEach(x => {
+    let q; try { q = unpack(x.d); } catch (e) { r.bad++; return; }
+    if (/^[\w-]{1,40}$/.test(x.id)) q.id = x.id; q.updated = +x.u || Date.now();
+    const ex = plays.find(p => p.id === q.id);
+    if (!ex) { plays.push(q); r.add++; return; }
+    if (JSON.stringify(pack(ex)) === JSON.stringify(pack(q)) || q.updated <= (ex.updated || 0)) { r.same++; return; }
+    Object.keys(ex).forEach(k => delete ex[k]); Object.assign(ex, q); r.upd++;
+  });
+  plays.sort((a, b) => (b.updated || 0) - (a.updated || 0)); persist(); renderHome();
+  return r;
+}
+async function runImport(text) {
+  let r; try { r = importData(await parseBackup(text)); } catch (e) { toast('読み込めませんでした。コードやファイルが途中で切れていないか確かめてください'); return; }
+  if (!r.add && !r.upd && !r.same) { toast('読み込める作戦がありませんでした'); return; }
+  const msg = [r.add && `${r.add}本 追加`, r.upd && `${r.upd}本 新しくしました`, r.same && `${r.same}本は同じなのでそのまま`, r.bad && `${r.bad}本は読めませんでした`].filter(Boolean).join('・');
+  sheet('読み込みました', [], Object.assign(document.createElement('div'), { className: 'bkInfo', textContent: msg }));
+}
+function saveBackupFile() {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([backupJson()], { type: 'application/json' }));
+  a.download = `HOOP SIGHT バックアップ ${ymd()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  markBackup(); toast(`${plays.length}本の作戦をファイルに保存しました`);
+}
+const shareFile = () => new File([backupJson()], `HOOP SIGHT バックアップ ${ymd()}.txt`, { type: 'text/plain' }); // 共有できる形が限られるので .txt
+const canShareFile = () => { try { return !!(navigator.canShare && navigator.canShare({ files: [shareFile()] })); } catch (e) { return false; } };
+async function shareBackupFile() {
+  try { await navigator.share({ files: [shareFile()], title: 'HOOP SIGHT バックアップ' }); markBackup(); toast('バックアップを送りました'); }
+  catch (e) { if (!e || e.name !== 'AbortError') toast('送れませんでした。「ファイルに保存」を使ってください'); }
+}
+async function copyBackupCode() {
+  const code = await backupCode(), long = code.length > CODE_MAX;
+  const tail = long ? '長いので LINE に貼れないときは「ファイルに保存」を使ってください' : 'LINE などで自分あてに送っておくと安心です';
+  try { await navigator.clipboard.writeText(code); markBackup(); toast(`コピーしました（${code.length.toLocaleString()}文字）。${tail}`); }
+  catch (e) { // コピーできないブラウザ：コードを見せて、手でコピーしてもらう
+    const ta = document.createElement('textarea'); ta.value = code; ta.readOnly = true;
+    sheet(`このコードをコピーしてください（${code.length.toLocaleString()}文字）`, [{ label: 'コピーできた', sub: tail, fn: markBackup }], ta); ta.select();
+  }
+}
+function pasteBackup() {
+  const ta = document.createElement('textarea'); ta.placeholder = 'バックアップのコード（HS1:…）や、作戦のリンクを貼る';
+  sheet('コード・リンクを貼って読み込む', [{ label: '読み込む', sub: '今ある作戦は消さずに足します', fn: () => runImport(ta.value) }], ta);
+  setTimeout(() => ta.focus(), 50);
+}
+function openBackup() {
+  const n = plays.length, last = lastBackup(), items = [];
+  const info = Object.assign(document.createElement('div'), { className: 'bkInfo', textContent: `この端末の作戦：${n}本 ／ 最後のバックアップ：${last ? agoText(last) : 'まだありません'}` });
+  if (n) {
+    items.push({ label: 'ファイルに保存', sub: 'すべての作戦を1つのファイルにします。機種変更のときは、このファイルを新しいスマホへ渡して読み込みます', fn: saveBackupFile });
+    if (canShareFile()) items.push({ label: 'ファイルを送る（LINE・ドライブなど）', sub: '自分あてに送っておくと、スマホが壊れても戻せます', fn: shareBackupFile });
+    items.push({ label: 'コードをコピー', sub: '数本だけ移すとき向け。LINE に貼れるのは約1万文字までです', fn: copyBackupCode });
+  }
+  items.push({ label: 'ファイルから読み込む', sub: '今ある作戦は消さずに足します', fn: () => $('#bkFile').click() });
+  items.push({ label: 'コード・リンクを貼って読み込む', fn: pasteBackup });
+  sheet('バックアップ', items, info);
+}
+$('#bBackup').onclick = openBackup; $('#bkNote').onclick = openBackup;
+$('#bkFile').onchange = async e => { const f = e.target.files[0]; e.target.value = ''; if (f) runImport(await f.text()); };
+function renderBackupNote() { // 作戦を変えたのに、しばらくバックアップしていないときだけ知らせる
+  const note = $('#bkNote'), last = lastBackup(), newest = Math.max(0, ...plays.map(p => p.updated || 0));
+  const days = last ? Math.floor((Date.now() - last) / 864e5) : 0, show = plays.length > 0 && newest > last && (last ? days >= 7 : plays.length >= 3);
+  note.hidden = !show;
+  if (show) note.textContent = last ? `最後のバックアップから ${days}日たちました。押して保存 ›` : `作戦が ${plays.length}本になりました。機種変更に備えて、バックアップしておきましょう ›`;
+}
+
 /* ───────── ボタン ───────── */
 $('#bNew').onclick = () => { const p = newPlay(); openPlay(p, false, 'edit'); toast('まず並び方を決めて、「＋ 次の動き」へ'); cur.step = 0; syncUI(); };
 $('#bHome').onclick = goHome;
@@ -1071,5 +1168,5 @@ function boot() {
 window.addEventListener('hashchange', () => { if (/[#&]p=/.test(location.hash)) boot(); });
 boot();
 if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-window.HS = { cur, compile, stateAt, stateAtT, draw, resize, pack, unpack, shareUrl, plays: () => plays, tf: () => tfNow }; // 確認用
+window.HS = { cur, compile, stateAt, stateAtT, backupCode, backupJson, parseBackup, importData, runImport, draw, resize, pack, unpack, shareUrl, plays: () => plays, tf: () => tfNow }; // 確認用
 })();
