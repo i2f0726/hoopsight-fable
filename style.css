@@ -24,10 +24,18 @@ button:active{transform:translateY(1px)}
 .screen{height:100dvh;display:flex;flex-direction:column;max-width:980px;margin:0 auto}
 
 /* ホーム */
-.brand{padding:calc(18px + env(safe-area-inset-top)) 18px 10px}
-.logo{font-size:30px;font-weight:800;letter-spacing:.04em}
-.logo span{color:var(--blue)}
-.tag{color:var(--sub);font-size:13px;letter-spacing:.2em}
+/* タイトルロゴ（オーパス版と同じ形：ボールの印＋BASKETBALL TACTICS、光る HOOP SIGHT、オレンジの 3D） */
+.brand{padding:calc(18px + env(safe-area-inset-top)) 18px 10px;display:grid;justify-items:center;gap:4px;text-align:center;
+  --neon:#38c8ff;--neon2:#c9f1ff;--ball:#ff8a3d;--num:"Barlow Condensed","Arial Narrow",Arial,sans-serif}
+.h-kicker{display:inline-flex;align-items:center;gap:8px;font:700 13px var(--num);letter-spacing:.42em;color:var(--ball);text-shadow:0 0 10px color-mix(in srgb,var(--ball) 60%,transparent)}
+.h-kicker svg{width:18px;height:18px;filter:drop-shadow(0 0 6px color-mix(in srgb,var(--ball) 70%,transparent))}
+.h-kicker::before,.h-kicker::after{content:"";width:28px;height:1px;background:linear-gradient(90deg,transparent,var(--ball))}
+.h-kicker::after{background:linear-gradient(90deg,var(--ball),transparent);margin-left:-.42em}
+.h-brand{margin:2px 0 0;font:700 clamp(36px,8vw,60px)/1 var(--num);letter-spacing:.18em;color:var(--neon2);text-shadow:0 0 12px var(--neon),0 0 32px var(--neon);white-space:nowrap}
+.h-3d{display:inline-block;margin-left:.18em;padding:0 .16em;font:700 .78em/1.05 var(--num);letter-spacing:.04em;color:#fff3e8;transform:skewX(-10deg) translateY(-.06em);
+  background:linear-gradient(160deg,#ffb070 0%,var(--ball) 45%,#c2410c 100%);border-radius:.12em;
+  text-shadow:0 .04em 0 #7a2c08,0 0 10px rgba(255,255,255,.35);box-shadow:0 .08em 0 #7a2c08,0 0 22px color-mix(in srgb,var(--ball) 70%,transparent)}
+.h-tag{font-size:15px;color:#9fb4bf;letter-spacing:.08em}
 .homeBody{flex:1;overflow:auto;padding:8px 18px calc(24px + env(safe-area-inset-bottom))}
 #hero{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--line);background:#0b1524;margin-bottom:12px;cursor:pointer;aspect-ratio:4/3;max-height:46dvh;width:100%}
 #heroCv{position:absolute;inset:0;width:100%;height:100%;display:block}
