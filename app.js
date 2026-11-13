@@ -106,9 +106,9 @@ function pathPoint(mv, start, u) {
 }
 
 /* 動きの時間。速さは一定（線の長さで決まる）。w＝ステップの始まりから動き出すまで待つ秒数 */
-const SPEED = 4.2, PASS_V = 10, SHOT_T = 1.0;
+const SPEED = 4.2, PASS_V = 10, SHOT_T = 1.0, MAX_WAIT = 8; // MAX_WAIT：待つ時間・パスやシュートを出す時刻の上限（秒）
 function moveTiming(mv) {
-  const w = Math.max(0, mv.w || 0), d = clamp(dense(mv.pts).len / SPEED, 0.6, 6.5);
+  const w = clamp(mv.w || 0, 0, MAX_WAIT), d = clamp(dense(mv.pts).len / SPEED, 0.6, 6.5);
   return { w, d, f: t => ease(clamp((t - w) / d, 0, 1)) };
 }
 
@@ -131,13 +131,13 @@ function compile(p) {
     let h = H[k], PS = null, SH = null; const pass = validPass(st, h, off);
     if (pass) { // ふつうは、出す人が動き終わってから。受ける人が走るなら、走り終わりに届くように出す
       const F = clamp(dist(S[k][h], n[pass]) / PASS_V, 0.35, 0.9);
-      const a = st.pa != null ? Math.max(0, st.pa) : Math.max(endOf(h), endOf(pass) - F, 0);
+      const a = st.pa != null ? clamp(st.pa, 0, MAX_WAIT) : Math.max(endOf(h), endOf(pass) - F, 0);
       PS = { from: h, to: pass, t0: a, t1: a + F }; end = Math.max(end, PS.t1); h = pass;
     }
     const lh = h || LH[k];
     if (st.shot && h) { // ふつうは、ボールが届いて・自分が動き終わってから打つ
       const lo = PS ? PS.t1 + 0.05 : 0;
-      const a = st.sa != null ? Math.max(lo, st.sa) : Math.max(PS ? PS.t1 + 0.15 : 0.15, endOf(h) + 0.05);
+      const a = st.sa != null ? Math.max(lo, clamp(st.sa, 0, MAX_WAIT)) : Math.max(PS ? PS.t1 + 0.15 : 0.15, endOf(h) + 0.05);
       SH = { id: h, t0: a, t1: a + SHOT_T }; end = Math.max(end, SH.t1); h = null;
     }
     H.push(h); LH.push(lh); P.push({ T, P: PS, SH });
@@ -451,7 +451,7 @@ function pack(p) {
       return o;
     }) };
 }
-const tenth = v => clamp(Math.round(+v || 0), 0, 600) / 10;
+const tenth = v => clamp(Math.round(+v || 0), 0, MAX_WAIT * 10) / 10;
 function unpack(c) {
   const p = newPlay(String(c.n || '作戦').slice(0, 30));
   p.full = !!c.c; p.no = clamp(c.o | 0, 1, 5); p.nd = clamp(c.d | 0, 0, 5); p.def = { a: 'auto', m: 'manual', o: 'off' }[c.m] || 'auto';
@@ -558,9 +558,16 @@ function camOf(v, p, st, dt) {
   return makeCam([T[0] + D * Math.sin(ob.yaw) * cp, T[1] + D * Math.cos(ob.yaw) * cp, D * Math.sin(ob.pitch)], T, cw, ch, { fit, zoom: ob.zoom, focus: [cur.focus[0], cur.focus[1], 0] });
 }
 function curState() { const p = cur.play; return stateAtT(p, compile(p), cur.t); }
+const PITCH_MAX = 1.1; // ななめで傾けられるのは約63度まで。これ以上は真上とほぼ同じ見え方になる
 function setView(v, quick) { // 視点を変える。前の視点からカメラをすべらせる
+  if (v === effView() && cur.mode === 'view') { // 同じ視点をもう一度押したら、回したり寄ったりしたのを元に戻す
+    if (v === 'tv' && cur.orbit) { cur.trans = { from: camOf('tv', cur.play, curState(), null), u: 0 }; cur.orbit = null; kick(); }
+    else if (v === 'me' && (cur.lk[0] || cur.lk[1])) { cur.lkBack = true; kick(); }
+    syncUI(); return;
+  }
   const old = effView(); cur.view = v; cur.lk = [0, 0]; cur.lkBack = false;
   const now = effView();
+  if (now === 'tv' && old !== 'tv') cur.orbit = null; // ななめは、いつも決まった角度から始める
   if (!quick && old !== now && cur.mode === 'view' && cw) { cur.look = null; cur.trans = { from: camOf(old, cur.play, curState(), null), u: 0 }; cur.look = null; kick(); }
   syncUI();
 }
@@ -585,6 +592,7 @@ function draw(dt) {
   }
   const [k] = timeToKU(C, cur.t), st = stateAtT(p, C, cur.t), shapes = n ? stepShapes(p, C, k) : [];
   const v = effView(), q = cur.quiz;
+  cur.drawn = cur.trans ? 'trans' : v; // 確認用：実際に描いた視点
   if (cur.trans) drawPersp(ctx, cw, ch, p, st, mixCam(cur.trans.from, camOf(v, p, st, dt), cur.trans.u), { shapes, me: cur.me, fade: true, onlyMine: v === 'me' });
   else if (v === 'top') {
     const hideAns = q && q.phase === 'ask', marks = q && q.guess ? [q.guess] : [];
@@ -631,8 +639,9 @@ function startQuiz() {
   const p = cur.play; if (!cur.me || !offIds(p).includes(cur.me)) return pickMe(startQuiz);
   const ks = p.steps.map((s, k) => s.moves[cur.me] ? k : -1).filter(k => k >= 0);
   if (!ks.length) return toast(`この作戦では ${cur.me.slice(1)}番は動きません`);
+  const prev = cur.quiz ? cur.quiz.prev : cur.view;
   setPlaying(false); cur.trans = null; cur.view = 'top'; cur.t = 0;
-  cur.quiz = { ks, i: 0, ok: 0, phase: 'run', stopAt: compile(p).t0[ks[0]], guess: null }; cur.onEnd = quizDone;
+  cur.quiz = { ks, i: 0, ok: 0, phase: 'run', stopAt: compile(p).t0[ks[0]], guess: null, prev }; cur.onEnd = quizDone;
   if (ks[0] === 0) quizAsk(); else { syncUI(); setPlaying(true); }
 }
 function quizAsk() { const q = cur.quiz; q.phase = 'ask'; q.guess = null; setPlaying(false); syncUI(); }
@@ -643,8 +652,12 @@ function quizAnswer(w) {
   toast(good ? '正解！' : 'おしい！ オレンジの丸が正しい場所'); syncUI();
   setTimeout(() => { if (cur.quiz === q && q.phase === 'run') setPlaying(true); }, good ? 500 : 1400);
 }
+function endQuiz() { // クイズをやめる・終える：クイズの前の視点に戻す
+  const q = cur.quiz; cur.quiz = null;
+  if (q && q.prev && q.prev !== 'top' && cur.mode === 'view') setView(q.prev); else syncUI();
+}
 function quizDone() {
-  const q = cur.quiz; if (!q) return; cur.quiz = null; syncUI();
+  const q = cur.quiz; if (!q) return; endQuiz();
   sheet(`${q.ks.length}問中 ${q.ok}問 正解！`, [
     { label: 'もう一度', fn: startQuiz },
     { label: '自分目線で確かめる', sub: 'コートに立ったつもりで、同じ動きを見ます', fn: () => { cur.t = 0; setView('me'); setPlaying(true); } },
@@ -652,7 +665,7 @@ function quizDone() {
 }
 function togglePlay() {
   const C = compile(cur.play); if (!hasAction(cur.play)) { toast('まだ動きがありません'); return; }
-  if (cur.quiz) { if (cur.quiz.phase === 'ask') return toast('コートをタップして答えてね'); cur.quiz = null; syncUI(); }
+  if (cur.quiz) { if (cur.quiz.phase === 'ask') return toast('コートをタップして答えてね'); endQuiz(); }
   if (cur.playing) return setPlaying(false);
   if (cur.t >= C.total - 0.01) { cur.t = 0; cur.look = null; }
   setPlaying(true);
@@ -665,7 +678,7 @@ function setMode(m) {
   $('#bEdit').textContent = cur.shared ? '＋ 作戦集に入れる' : '✎ 直す';
   $('#pName').readOnly = cur.shared;
   cur.quiz = null; cur.trans = null; cur.orbit = null; cur.focus = null; cur.lk = [0, 0]; cur.lkBack = false; cur.tp = 0; cur.tpPlay = false;
-  if (m === 'view') { cur.t = 0; cur.look = null; } else cur.view = 'top';
+  if (m === 'view') { cur.t = 0; cur.look = null; } // 視点（cur.view）は直す→再生でもそのまま残す
   syncUI(); requestAnimationFrame(resize);
 }
 function syncUI() {
@@ -844,7 +857,7 @@ function viewMove(e) {
   const dx = e.clientX - vg.x, dy = e.clientY - vg.y;
   if (!vg.moved) { if (Math.hypot(e.clientX - vg.sx, e.clientY - vg.sy) < 7) return; vg.moved = true; }
   vg.x = e.clientX; vg.y = e.clientY;
-  if (v === 'tv') { const ob = orbitNow(); ob.yaw -= dx * 0.008; ob.pitch = clamp(ob.pitch + dy * 0.006, 0.2, 1.4); cur.trans = null; draw(); }
+  if (v === 'tv') { const ob = orbitNow(); ob.yaw -= dx * 0.008; ob.pitch = clamp(ob.pitch + dy * 0.006, 0.2, PITCH_MAX); cur.trans = null; draw(); }
   else if (v === 'me') { cur.lkBack = false; cur.lk = [clamp(cur.lk[0] - dx * 0.006, -2, 2), clamp(cur.lk[1] + dy * 0.004, -0.45, 0.45)]; cur.trans = null; draw(); }
 }
 function viewUp(e, cancel) {
@@ -910,7 +923,7 @@ function renderTiming() {
     const dg = tmDrag && tmDrag.row && tmDrag.row.kind === r.kind && tmDrag.row.id === r.id ? ' drag' : '';
     h += `<div class="tmRow">${lbl}<div class="tmTrack" data-i="${i}">${wait}<div class="tmBar ${r.kind === 'mv' ? r.id[0] : r.kind}${dg}" style="left:${pctOf(r.t0)};width:${pctOf(r.t1 - r.t0)}">${txt}</div><i class="tmNow"></i></div>${auto}</div>`;
   });
-  const stp = tmMax > 8 ? 2 : 1; let ticks = '';
+  const stp = tmMax <= 8 ? 1 : tmMax <= 16 ? 2 : 5; let ticks = ''; // 目盛りは多くても9本ほど
   for (let s = 0; s <= tmMax; s += stp) ticks += `<span class="tmTick${s + stp > tmMax ? ' last' : ''}" style="left:${pctOf(s)}">${s}${s === 0 ? '' : '秒'}</span>`;
   h += `<div class="tmRow"><span></span><div class="tmTrack tmRuler" data-i="-1">${ticks}<i class="tmNow"></i></div><span></span></div>`;
   tmEl.innerHTML = h; tmNow();
@@ -939,7 +952,7 @@ tmEl.addEventListener('pointermove', e => {
   const g = tmDrag; if (!g) return;
   if (g.scrub) { cur.tp = clamp((e.clientX - g.r.left) / (g.r.width / tmMax), 0, tmMax); tmNow(); draw(); return; }
   if (!g.pushed && Math.abs(e.clientX - g.x) < 5) return; // 触っただけでは変えない
-  const nt = Math.max(0, Math.round((g.t0 + (e.clientX - g.x) / g.px) * 10) / 10);
+  const nt = clamp(Math.round((g.t0 + (e.clientX - g.x) / g.px) * 10) / 10, 0, MAX_WAIT); // 右へ引っぱり続けても8秒まで
   const st = cur.play.steps[cur.step - 1], r = g.row;
   if (!g.pushed) { pushUndo(); g.pushed = true; }
   if (r.kind === 'mv') { if (nt > 0) st.moves[r.id].w = nt; else delete st.moves[r.id].w; }
@@ -1078,7 +1091,7 @@ $('#bSpeed').onclick = () => { cur.speed = { 1: 0.5, 0.5: 1.5, 1.5: 1 }[cur.spee
 $('#seek').oninput = e => { setPlaying(false); cur.quiz = null; cur.t = e.target.value / 1000 * compile(cur.play).total; cur.look = null; draw(); };
 $('#viewSeg').onclick = e => { const v = e.target.dataset.v; if (!v) return; cur.quiz = null; if (v === 'me' && !cur.me) return pickMe(() => setView('me')); setView(v); };
 $('#bMe').onclick = () => pickMe();
-$('#bQuiz').onclick = () => { if (cur.quiz) { cur.quiz = null; setPlaying(false); syncUI(); } else startQuiz(); };
+$('#bQuiz').onclick = () => { if (cur.quiz) { setPlaying(false); endQuiz(); } else startQuiz(); };
 function pickMe(then) {
   const box = document.createElement('div'); box.className = 'nums';
   offIds(cur.play).forEach(id => { const b = document.createElement('button'); b.textContent = id.slice(1); if (cur.me === id) b.className = 'sel'; b.onclick = () => { cur.me = id; localStorage.setItem(KEY_ME, id); cur.look = null; closeSheet(); syncUI(); if (typeof then === 'function') then(); }; box.appendChild(b); });
