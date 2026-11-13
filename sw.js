@@ -1,5 +1,5 @@
 /* オフラインでも開けるようにする。つながるときは必ず新しいものを取り、だめなら保存分を使う */
-const CACHE = 'hoopsight-v11';
+const CACHE = 'hoopsight-v12';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com']; // タイトルロゴの文字（Barlow Condensed）
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });

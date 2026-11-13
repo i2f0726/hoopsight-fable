@@ -277,13 +277,6 @@ function drawTop(ctx, w, h, p, st, o) {
     const c = S(g.at); ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = g.id[0] === 'd' ? C_DEF : C_OFF; ctx.globalAlpha = 0.6; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(c[0], c[1], pr * 0.86, 0, 7); ctx.stroke(); ctx.restore();
   });
-  (o.marks || []).forEach(g => { // クイズ：タップした場所（×）と正しい場所（丸）
-    const a = S(g.at), c = S(g.ans), r = pr * 0.8; ctx.save(); ctx.lineCap = 'round';
-    ctx.strokeStyle = C_ME; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(c[0], c[1], pr * 1.25, 0, 7); ctx.stroke();
-    ctx.strokeStyle = g.good ? '#1f9d55' : '#22344f'; ctx.lineWidth = 4; ctx.beginPath();
-    if (g.good) { ctx.arc(a[0], a[1], r, 0, 7); } else { ctx.moveTo(a[0] - r, a[1] - r); ctx.lineTo(a[0] + r, a[1] + r); ctx.moveTo(a[0] + r, a[1] - r); ctx.lineTo(a[0] - r, a[1] + r); }
-    ctx.stroke(); ctx.restore();
-  });
   const ids = [...defIds(p), ...offIds(p)];
   ids.forEach(id => {
     const q = st.pos[id]; if (!q) return; const c = S(q), isD = id[0] === 'd', r = isD ? pr * 0.86 : pr;
@@ -519,7 +512,7 @@ const SAMPLES = [ // w：少し待ってから動く（秒）。screen：動い�
 
 /* ───────── 画面の状態 ───────── */
 const cv = $('#cv'), ctx = cv.getContext('2d');
-const cur = { play: null, shared: false, mode: 'edit', step: 0, view: 'top', me: null, t: 0, playing: false, speed: 1, undo: [], rec: null, look: null, orbit: null, focus: null, lk: [0, 0], lkBack: false, trans: null, quiz: null,
+const cur = { play: null, shared: false, mode: 'edit', step: 0, view: 'top', me: null, t: 0, playing: false, speed: 1, undo: [], rec: null, look: null, orbit: null, focus: null, lk: [0, 0], lkBack: false, trans: null,
   timing: false, tp: 0, tpPlay: false }; // timing：タイミングの帯を開いている。tp：帯で見ている時刻（ステップの始まりからの秒）
 let cw = 0, ch = 0, tfNow = null, drag = null;
 
@@ -591,13 +584,11 @@ function draw(dt) {
     return;
   }
   const [k] = timeToKU(C, cur.t), st = stateAtT(p, C, cur.t), shapes = n ? stepShapes(p, C, k) : [];
-  const v = effView(), q = cur.quiz;
+  const v = effView();
   cur.drawn = cur.trans ? 'trans' : v; // 確認用：実際に描いた視点
   if (cur.trans) drawPersp(ctx, cw, ch, p, st, mixCam(cur.trans.from, camOf(v, p, st, dt), cur.trans.u), { shapes, me: cur.me, fade: true, onlyMine: v === 'me' });
-  else if (v === 'top') {
-    const hideAns = q && q.phase === 'ask', marks = q && q.guess ? [q.guess] : [];
-    tfNow = drawTop(ctx, cw, ch, p, st, { paths: hideAns ? [] : [{ shapes, alpha: 0.4 }], me: cur.me, marks });
-  } else drawPersp(ctx, cw, ch, p, st, camOf(v, p, st, dt), { shapes, me: cur.me, hide: v === 'me' ? cur.me : null, fade: v === 'me', onlyMine: v === 'me', cue: true });
+  else if (v === 'top') tfNow = drawTop(ctx, cw, ch, p, st, { paths: [{ shapes, alpha: 0.4 }], me: cur.me });
+  else drawPersp(ctx, cw, ch, p, st, camOf(v, p, st, dt), { shapes, me: cur.me, hide: v === 'me' ? cur.me : null, fade: v === 'me', onlyMine: v === 'me', cue: true });
   if (cur.rec) { // 動画には作戦名とアプリ名を入れる
     ctx.save(); ctx.font = '700 18px system-ui,sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.fillStyle = '#12233a';
     ctx.strokeText(p.name, 12, 10); ctx.fillText(p.name, 12, 10);
@@ -614,9 +605,8 @@ function tick(ts) { // 再生・視点の切り替え・首振りの戻り、動
   raf = 0; if (!cur.play) return;
   const dt = clamp((ts - lastTs) / 1000, 0, 0.05); lastTs = ts; let ended = false;
   if (cur.playing) {
-    const C = compile(cur.play), q = cur.quiz; cur.t += dt * cur.speed;
-    if (q && q.phase === 'run' && cur.t >= q.stopAt) { cur.t = q.stopAt; quizAsk(); }
-    else if (cur.t >= C.total + 0.5) { cur.t = C.total; setPlaying(false); ended = true; }
+    const C = compile(cur.play); cur.t += dt * cur.speed;
+    if (cur.t >= C.total + 0.5) { cur.t = C.total; setPlaying(false); ended = true; }
   }
   if (cur.tpPlay) { // タイミングの帯の「▶ 見る」：このステップだけを動かす
     const C = compile(cur.play), d = C.durs[cur.step - 1] || 0;
@@ -634,38 +624,8 @@ function setPlaying(on) {
   if (on) kick();
 }
 
-/* クイズ：自分が動くステップの前で止めて、行き先をタップで答える */
-function startQuiz() {
-  const p = cur.play; if (!cur.me || !offIds(p).includes(cur.me)) return pickMe(startQuiz);
-  const ks = p.steps.map((s, k) => s.moves[cur.me] ? k : -1).filter(k => k >= 0);
-  if (!ks.length) return toast(`この作戦では ${cur.me.slice(1)}番は動きません`);
-  const prev = cur.quiz ? cur.quiz.prev : cur.view;
-  setPlaying(false); cur.trans = null; cur.view = 'top'; cur.t = 0;
-  cur.quiz = { ks, i: 0, ok: 0, phase: 'run', stopAt: compile(p).t0[ks[0]], guess: null, prev }; cur.onEnd = quizDone;
-  if (ks[0] === 0) quizAsk(); else { syncUI(); setPlaying(true); }
-}
-function quizAsk() { const q = cur.quiz; q.phase = 'ask'; q.guess = null; setPlaying(false); syncUI(); }
-function quizAnswer(w) {
-  const q = cur.quiz, C = compile(cur.play), k = q.ks[q.i], ans = C.S[k + 1][cur.me], good = dist(w, ans) < 2.0;
-  if (good) q.ok++; q.guess = { at: w, ans, good }; q.phase = 'run'; q.i++;
-  q.stopAt = q.i < q.ks.length ? C.t0[q.ks[q.i]] : Infinity; cur.onEnd = quizDone;
-  toast(good ? '正解！' : 'おしい！ オレンジの丸が正しい場所'); syncUI();
-  setTimeout(() => { if (cur.quiz === q && q.phase === 'run') setPlaying(true); }, good ? 500 : 1400);
-}
-function endQuiz() { // クイズをやめる・終える：クイズの前の視点に戻す
-  const q = cur.quiz; cur.quiz = null;
-  if (q && q.prev && q.prev !== 'top' && cur.mode === 'view') setView(q.prev); else syncUI();
-}
-function quizDone() {
-  const q = cur.quiz; if (!q) return; endQuiz();
-  sheet(`${q.ks.length}問中 ${q.ok}問 正解！`, [
-    { label: 'もう一度', fn: startQuiz },
-    { label: '自分目線で確かめる', sub: 'コートに立ったつもりで、同じ動きを見ます', fn: () => { cur.t = 0; setView('me'); setPlaying(true); } },
-  ]);
-}
 function togglePlay() {
   const C = compile(cur.play); if (!hasAction(cur.play)) { toast('まだ動きがありません'); return; }
-  if (cur.quiz) { if (cur.quiz.phase === 'ask') return toast('コートをタップして答えてね'); endQuiz(); }
   if (cur.playing) return setPlaying(false);
   if (cur.t >= C.total - 0.01) { cur.t = 0; cur.look = null; }
   setPlaying(true);
@@ -677,7 +637,7 @@ function setMode(m) {
   $('#editBar').hidden = m !== 'edit'; $('#viewBar').hidden = m !== 'view';
   $('#bEdit').textContent = cur.shared ? '＋ 作戦集に入れる' : '✎ 直す';
   $('#pName').readOnly = cur.shared;
-  cur.quiz = null; cur.trans = null; cur.orbit = null; cur.focus = null; cur.lk = [0, 0]; cur.lkBack = false; cur.tp = 0; cur.tpPlay = false;
+  cur.trans = null; cur.orbit = null; cur.focus = null; cur.lk = [0, 0]; cur.lkBack = false; cur.tp = 0; cur.tpPlay = false;
   if (m === 'view') { cur.t = 0; cur.look = null; } // 視点（cur.view）は直す→再生でもそのまま残す
   syncUI(); requestAnimationFrame(resize);
 }
@@ -691,10 +651,9 @@ function syncUI() {
   document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === effView()));
   $('#bMe').textContent = cur.me ? `自分の番号：${cur.me.slice(1)}` : '自分の番号をえらぶ';
   $('#bSpeed').textContent = '速さ ×' + cur.speed;
-  const ev = effView(), qz = cur.quiz; $('#bQuiz').textContent = qz ? 'やめる' : 'クイズ';
+  const ev = effView();
   const hint = $('#hint'); hint.classList.toggle('dark', cur.mode === 'view' && ev !== 'top');
-  hint.textContent = cur.mode === 'view' ? (qz ? (qz.phase === 'ask' ? `${cur.me.slice(1)}番は、次にどこへ動く？ コートをタップ` : '')
-      : ev === 'tv' ? 'なぞる＝回す ／ 2本指＝寄る ／ ダブルタップ＝戻す' : ev === 'me' ? 'なぞる＝まわりを見る' : '') : cur.step === 0 ? '選手をドラッグして並べる ／ タップでボールを持たせる'
+  hint.textContent = cur.mode === 'view' ? (ev === 'tv' ? 'なぞる＝回す ／ 2本指＝寄る ／ ダブルタップ＝戻す' : ev === 'me' ? 'なぞる＝まわりを見る' : '') : cur.step === 0 ? '選手をドラッグして並べる ／ タップでボールを持たせる'
     : cur.timing ? '帯の棒を右へずらすと、その分だけ待ってから動きます'
     : 'なぞる＝走る ／ 味方をタップ＝パス ／ ゴール＝シュート';
   $('#bTiming').hidden = cur.step === 0; $('#bTiming').classList.toggle('on', cur.timing);
@@ -866,8 +825,6 @@ function viewUp(e, cancel) {
   if (!g || cancel) return;
   if (effView() === 'me' && g.moved) { cur.lkBack = true; kick(); return; } // 指を離すと正面に戻る
   if (g.moved || g.pinch) return;
-  const q = cur.quiz, r = cv.getBoundingClientRect();
-  if (q && q.phase === 'ask' && tfNow) return quizAnswer(tfNow.toW(e.clientX - r.left, e.clientY - r.top));
   const now = performance.now();
   if (now - lastTap < 350 && effView() === 'tv' && cur.orbit) { cur.trans = { from: camOf('tv', cur.play, curState(), null), u: 0 }; cur.orbit = null; kick(); lastTap = 0; return; }
   lastTap = now;
@@ -1088,14 +1045,13 @@ $('#bEdit').onclick = () => {
   cur.step = Math.min(1, cur.play.steps.length); setMode('edit');
 };
 $('#bSpeed').onclick = () => { cur.speed = { 1: 0.5, 0.5: 1.5, 1.5: 1 }[cur.speed]; syncUI(); };
-$('#seek').oninput = e => { setPlaying(false); cur.quiz = null; cur.t = e.target.value / 1000 * compile(cur.play).total; cur.look = null; draw(); };
-$('#viewSeg').onclick = e => { const v = e.target.dataset.v; if (!v) return; cur.quiz = null; if (v === 'me' && !cur.me) return pickMe(() => setView('me')); setView(v); };
+$('#seek').oninput = e => { setPlaying(false); cur.t = e.target.value / 1000 * compile(cur.play).total; cur.look = null; draw(); };
+$('#viewSeg').onclick = e => { const v = e.target.dataset.v; if (!v) return; if (v === 'me' && !cur.me) return pickMe(() => setView('me')); setView(v); };
 $('#bMe').onclick = () => pickMe();
-$('#bQuiz').onclick = () => { if (cur.quiz) { setPlaying(false); endQuiz(); } else startQuiz(); };
 function pickMe(then) {
   const box = document.createElement('div'); box.className = 'nums';
   offIds(cur.play).forEach(id => { const b = document.createElement('button'); b.textContent = id.slice(1); if (cur.me === id) b.className = 'sel'; b.onclick = () => { cur.me = id; localStorage.setItem(KEY_ME, id); cur.look = null; closeSheet(); syncUI(); if (typeof then === 'function') then(); }; box.appendChild(b); });
-  sheet('自分の番号をえらぼう', [{ label: 'えらばない', sub: '全員を同じように表示します', fn: () => { cur.me = null; cur.quiz = null; if (cur.view === 'me') cur.view = 'top'; syncUI(); } }], box);
+  sheet('自分の番号をえらぼう', [{ label: 'えらばない', sub: '全員を同じように表示します', fn: () => { cur.me = null; if (cur.view === 'me') cur.view = 'top'; syncUI(); } }], box);
 }
 $('#bForm').onclick = () => {
   const p = cur.play, box = document.createElement('div'); box.style.display = 'contents';
