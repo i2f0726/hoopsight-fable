@@ -112,6 +112,8 @@ function moveTiming(mv) {
   return { w, d, f: t => ease(clamp((t - w) / d, 0, 1)) };
 }
 
+const hasAction = p => p.steps.some(s => Object.keys(s.moves).length || s.pass || s.shot); // 動き・パス・シュートが1つでもある
+
 /* 作戦全体の下ごしらえ：各ステップの出発位置・ボールを持つ人・各動きの時間・パスとシュートの時刻・長さ */
 function compile(p) {
   const ids = scripted(p), off = offIds(p), S = [{}], durs = [], P = [];
@@ -649,7 +651,7 @@ function quizDone() {
   ]);
 }
 function togglePlay() {
-  const C = compile(cur.play); if (!cur.play.steps.length) { toast('まだ動きがありません'); return; }
+  const C = compile(cur.play); if (!hasAction(cur.play)) { toast('まだ動きがありません'); return; }
   if (cur.quiz) { if (cur.quiz.phase === 'ask') return toast('コートをタップして答えてね'); cur.quiz = null; syncUI(); }
   if (cur.playing) return setPlaying(false);
   if (cur.t >= C.total - 0.01) { cur.t = 0; cur.look = null; }
@@ -794,7 +796,10 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   if (cur.mode !== 'edit') return viewMove(e);
   if (!drag) return; const p = cur.play, q = limit(evPos(e), p);
-  if (!drag.id) return;
+  if (!drag.id) { // 選手のいない所をなぞっても何も起きないので、一度だけ教える
+    if (!drag.warned && cur.step > 0 && dist(q, drag.down) > 0.8) { drag.warned = true; toast('選手の丸の上から指をすべらせてください'); }
+    return;
+  }
   const canMove = C_ids(drag).includes(drag.id);
   if (!drag.moved) {
     if (dist(q, drag.down) < 0.35) return;
@@ -817,7 +822,7 @@ function endDrag(e) {
         const mv = { pts, screen: false };
         if (prev && prev.w) mv.w = prev.w;
         p.steps[d.k].moves[d.id] = mv;
-      } else cur.undo.pop();
+      } else { cur.undo.pop(); toast('短すぎるので動きにしませんでした。もう少し長くなぞってください'); }
     }
     touch(); syncUI(); return;
   }
@@ -1047,12 +1052,23 @@ function renderBackupNote() { // 作戦を変えたのに、しばらくバッ�
 }
 
 /* ───────── ボタン ───────── */
-$('#bNew').onclick = () => { const p = newPlay(); openPlay(p, false, 'edit'); toast('まず並び方を決めて、「＋ 次の動き」へ'); cur.step = 0; syncUI(); };
+$('#bNew').onclick = () => { // すぐ「1」のステップで開く。なぞればそのまま動きになる（並びは「配置」で変える）
+  const p = newPlay(); p.steps.push({ moves: {}, pass: null, shot: false }); openPlay(p, false, 'edit'); cur.step = 1; syncUI();
+  toast('選手を指でなぞると動きになります');
+};
 $('#bHome').onclick = goHome;
 $('#pName').oninput = e => { if (cur.shared) return; cur.play.name = e.target.value.trim() || '作戦'; touch(); };
 $('#pName').onkeydown = e => { if (e.key === 'Enter') e.target.blur(); };
 $('#bUndo').onclick = undo;
-$('#bPlay').onclick = () => { if (!cur.play.steps.length) return toast('「＋ 次の動き」で動きを描いてから再生します'); setMode('view'); setPlaying(true); };
+$('#bPlay').onclick = () => {
+  if (!hasAction(cur.play)) { // 「配置」で選手を動かしても並びが変わるだけなので、ここで止まる人が多い
+    const wasSetup = cur.step === 0;
+    if (!cur.play.steps.length) cur.play.steps.push({ moves: {}, pass: null, shot: false });
+    cur.step = 1; syncUI();
+    return toast(wasSetup ? '「配置」では並びが変わるだけです。この「1」で選手をなぞると動きになります' : 'まだ動きがありません。選手を指でなぞってから再生してください');
+  }
+  setMode('view'); setPlaying(true);
+};
 $('#bPlay2').onclick = togglePlay;
 $('#bEdit').onclick = () => {
   if (cur.shared) { const q = clone(cur.play); q.id = newPlay().id; q.updated = Date.now(); plays.unshift(q); persist(); cur.play = q; cur.shared = false; toast('自分の作戦集に入れました'); history.replaceState(null, '', location.pathname); }
